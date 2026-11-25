@@ -3003,6 +3003,14 @@ export const MESSAGE_REGISTRY = {
       "en": "★ Priority mailboxes",
       "zh": "★ 重点邮箱"
     },
+    "priorityMailboxesPlaceholder": {
+      "en": "Search and add priority mailboxes, or star them in Mailbox List",
+      "zh": "输入关键词搜索添加重点邮箱，或在「邮箱列表」点星标收藏"
+    },
+    "noPriorityMailboxes": {
+      "en": "No priority mailboxes yet. Star any mailbox in Mailbox List or add one above.",
+      "zh": "暂未设置重点邮箱，可在「邮箱列表」点 ★ 收藏或在右侧搜索添加"
+    },
     "pinAddress": {
       "en": "Star",
       "zh": "收藏邮箱"

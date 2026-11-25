@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useLocalStorage, useSessionStorage } from '@vueuse/core';
 import { useScopedI18n } from '@/i18n/app'
 import { StarRound, StarBorderRound, SearchRound, FilterAltOutlined, CloseRound } from '@vicons/material'
@@ -46,11 +46,58 @@ const handleAdminForward = (mail, model) => {
 
 const mailBoxKey = ref(0)
 
-// Keep exact localStorage keys from previous custom deployment so user's saved settings auto-restore
+// Exact localStorage keys so saved priority domains & mailboxes persist & sync with Account.vue
 const priorityDomains = useLocalStorage('adminPriorityDomains', [])
 const rawMailView = useLocalStorage('adminPriorityMailView', 'all')
 const priorityAddresses = useLocalStorage('adminPriorityAddresses', [])
 const showPriorityHelp = ref(false)
+
+// Remote searchable picker for adding priority mailboxes right inside Mails.vue
+const mailboxSearchOptions = ref([])
+const mailboxSearchLoading = ref(false)
+const mailboxPickerValue = ref(null)
+let mailboxSearchTimer = null
+
+const searchAdminMailboxes = (query) => {
+    const q = (query || '').trim()
+    clearTimeout(mailboxSearchTimer)
+    mailboxSearchTimer = setTimeout(async () => {
+        mailboxSearchLoading.value = true
+        try {
+            const params = new URLSearchParams({
+                limit: '30',
+                offset: '0',
+                sort_by: 'updated_at',
+                sort_order: 'desc',
+            })
+            if (q) params.set('query', q)
+            const res = await api.fetch(`/admin/address?${params}`, { showLoading: false })
+            mailboxSearchOptions.value = (res?.results || [])
+                .map(r => r.name)
+                .filter(Boolean)
+                .map(addr => ({ label: addr, value: addr.toLowerCase() }))
+        } catch {
+            mailboxSearchOptions.value = []
+        } finally {
+            mailboxSearchLoading.value = false
+        }
+    }, 220)
+}
+
+const handleAddPriorityMailbox = (addr) => {
+    if (!addr) return
+    const normalized = String(addr).trim().toLowerCase()
+    if (!priorityAddresses.value.includes(normalized)) {
+        priorityAddresses.value = [normalized, ...priorityAddresses.value]
+    }
+    adminMailTabAddress.value = normalized
+    mailboxPickerValue.value = null
+    queryMail()
+}
+
+onBeforeUnmount(() => {
+    clearTimeout(mailboxSearchTimer)
+})
 
 const mailView = computed({
     get: () => ['all', 'priority', 'other'].includes(rawMailView.value) ? rawMailView.value : 'all',
@@ -106,6 +153,12 @@ const selectPinnedAddress = (addr) => {
         adminMailTabAddress.value = ''
     } else {
         adminMailTabAddress.value = addr
+        const domain = addr.split('@')[1]?.toLowerCase()
+        if (mailView.value === 'priority' && domain && !activePriorityDomains.value.includes(domain)) {
+            mailView.value = 'all'
+        } else if (mailView.value === 'other' && domain && activePriorityDomains.value.includes(domain)) {
+            mailView.value = 'all'
+        }
     }
     queryMail()
 }
@@ -122,7 +175,6 @@ watch([mailView, activePriorityDomains], () => {
 watch(adminMailTabAddress, (nextVal, prevVal) => {
     const trimmed = (nextVal || '').trim()
     if (trimmed && trimmed !== (prevVal || '').trim()) {
-        // When jumping from a specific mailbox row, ensure it isn't hidden by a mismatched priority domain filter
         const domain = trimmed.split('@')[1]?.toLowerCase()
         if (mailView.value === 'priority' && domain && !activePriorityDomains.value.includes(domain)) {
             mailView.value = 'all'
@@ -166,71 +218,124 @@ const deleteMail = async (curMailId) => {
 
 <template>
     <div class="admin-mails-page">
-        <!-- Priority Domains & View Filter Card -->
+        <!-- Priority Domains & Priority Mailboxes Filter Panel -->
         <div class="filter-panel">
-            <div class="filter-panel-header">
-                <div class="filter-title-wrap">
-                    <n-icon :component="StarRound" :size="16" class="star-accent" />
-                    <span class="filter-title">{{ t('priorityDomains').replace(/^★\s*/, '') }}</span>
-                    <n-tag v-if="activePriorityDomains.length > 0" size="tiny" type="primary" :bordered="false" round>
-                        {{ activePriorityDomains.length }}
-                    </n-tag>
+            <!-- Row 1: Priority Recipient Domains -->
+            <div class="filter-block">
+                <div class="filter-panel-header">
+                    <div class="filter-title-wrap">
+                        <n-icon :component="StarRound" :size="16" class="star-accent" />
+                        <span class="filter-title">{{ t('priorityDomains').replace(/^★\s*/, '') }}</span>
+                        <n-tag v-if="activePriorityDomains.length > 0" size="tiny" type="primary" :bordered="false" round>
+                            {{ activePriorityDomains.length }}
+                        </n-tag>
+                    </div>
+
+                    <div class="view-segmented" role="radiogroup" :aria-label="t('mailView')">
+                        <button
+                            type="button"
+                            class="view-seg-btn"
+                            :class="{ 'is-active': mailView === 'all' }"
+                            @click="mailView = 'all'"
+                        >
+                            {{ t('allMail') }}
+                        </button>
+                        <button
+                            type="button"
+                            class="view-seg-btn"
+                            :class="{ 'is-active': mailView === 'priority' }"
+                            @click="mailView = 'priority'"
+                        >
+                            {{ t('priorityMail') }}
+                        </button>
+                        <button
+                            type="button"
+                            class="view-seg-btn"
+                            :class="{ 'is-active': mailView === 'other' }"
+                            @click="mailView = 'other'"
+                        >
+                            {{ t('otherMail') }}
+                        </button>
+                    </div>
                 </div>
 
-                <!-- View Switcher -->
-                <div class="view-segmented" role="radiogroup" :aria-label="t('mailView')">
-                    <button
-                        type="button"
-                        class="view-seg-btn"
-                        :class="{ 'is-active': mailView === 'all' }"
-                        @click="mailView = 'all'"
-                    >
-                        {{ t('allMail') }}
-                    </button>
-                    <button
-                        type="button"
-                        class="view-seg-btn"
-                        :class="{ 'is-active': mailView === 'priority' }"
-                        @click="mailView = 'priority'"
-                    >
-                        {{ t('priorityMail') }}
-                    </button>
-                    <button
-                        type="button"
-                        class="view-seg-btn"
-                        :class="{ 'is-active': mailView === 'other' }"
-                        @click="mailView = 'other'"
-                    >
-                        {{ t('otherMail') }}
-                    </button>
+                <div class="domain-select-row">
+                    <n-select
+                        v-model:value="priorityDomains"
+                        multiple
+                        filterable
+                        clearable
+                        :options="domainOptions"
+                        :placeholder="t('choosePriorityDomains')"
+                        max-tag-count="responsive"
+                        size="small"
+                    />
+                    <n-button size="small" quaternary @click="showPriorityHelp = !showPriorityHelp" class="help-toggle-btn">
+                        <template #icon><n-icon :component="FilterAltOutlined" /></template>
+                    </n-button>
                 </div>
+
+                <p v-if="showPriorityHelp" class="priority-help-text">
+                    {{ t('priorityHelp') }}
+                </p>
+
+                <n-alert v-if="mailView === 'priority' && activePriorityDomains.length === 0" type="info" :bordered="false" class="empty-priority-alert">
+                    {{ t('noPriorityDomains') }}
+                </n-alert>
             </div>
 
-            <div class="domain-select-row">
-                <n-select
-                    v-model:value="priorityDomains"
-                    multiple
-                    filterable
-                    clearable
-                    :options="domainOptions"
-                    :placeholder="t('choosePriorityDomains')"
-                    max-tag-count="responsive"
-                    size="small"
-                />
-                <n-button size="small" quaternary @click="showPriorityHelp = !showPriorityHelp" class="help-toggle-btn">
-                    <template #icon><n-icon :component="FilterAltOutlined" /></template>
-                </n-button>
+            <div class="filter-divider" />
+
+            <!-- Row 2: Priority Mailboxes (always visible & synced with Mailbox List ★) -->
+            <div class="filter-block">
+                <div class="priority-mailbox-header">
+                    <div class="filter-title-wrap">
+                        <n-icon :component="StarRound" :size="16" class="star-accent" />
+                        <span class="filter-title">{{ t('priorityMailboxes').replace(/^★\s*/, '') }}</span>
+                        <n-tag v-if="priorityAddresses.length > 0" size="tiny" type="warning" :bordered="false" round>
+                            {{ priorityAddresses.length }}
+                        </n-tag>
+                    </div>
+                    <n-select
+                        v-model:value="mailboxPickerValue"
+                        :options="mailboxSearchOptions"
+                        :loading="mailboxSearchLoading"
+                        filterable
+                        remote
+                        clearable
+                        size="small"
+                        :placeholder="t('priorityMailboxesPlaceholder')"
+                        class="priority-mailbox-picker"
+                        @focus="searchAdminMailboxes('')"
+                        @search="searchAdminMailboxes"
+                        @update:value="handleAddPriorityMailbox"
+                    />
+                </div>
+
+                <div v-if="priorityAddresses.length > 0" class="pinned-chips">
+                    <span
+                        v-for="addr in priorityAddresses"
+                        :key="addr"
+                        class="pinned-chip"
+                        :class="{ 'is-active': normalizedAddressQuery === addr }"
+                        @click="selectPinnedAddress(addr)"
+                    >
+                        <n-icon :component="StarRound" :size="12" class="star-accent" />
+                        <span class="pinned-chip-text">{{ addr }}</span>
+                        <button
+                            type="button"
+                            class="pinned-chip-remove"
+                            @click.stop="removePinnedAddress(addr)"
+                            :aria-label="t('unpinAddress')"
+                        >
+                            <n-icon :component="CloseRound" :size="12" />
+                        </button>
+                    </span>
+                </div>
+                <p v-else class="priority-help-text">{{ t('noPriorityMailboxes') }}</p>
             </div>
 
-            <p v-if="showPriorityHelp" class="priority-help-text">
-                {{ t('priorityHelp') }}
-            </p>
-
-            <n-alert v-if="mailView === 'priority' && activePriorityDomains.length === 0" type="info" :bordered="false" class="empty-priority-alert">
-                {{ t('noPriorityDomains') }}
-            </n-alert>
-
-            <!-- Address Query & Starred Priority Mailboxes -->
+            <!-- Row 3: Exact Address Search -->
             <div class="address-query-row">
                 <n-input-group class="address-input-group">
                     <n-input
@@ -258,30 +363,6 @@ const deleteMail = async (curMailId) => {
                     </template>
                     {{ isCurrentAddressPinned ? t('unpinAddress') : t('pinAddress') }}
                 </n-button>
-            </div>
-
-            <!-- Pinned Priority Mailboxes Chips -->
-            <div v-if="priorityAddresses.length > 0" class="pinned-mailboxes-row">
-                <span class="pinned-label">{{ t('priorityMailboxes') }}:</span>
-                <div class="pinned-chips">
-                    <span
-                        v-for="addr in priorityAddresses"
-                        :key="addr"
-                        class="pinned-chip"
-                        :class="{ 'is-active': normalizedAddressQuery === addr }"
-                        @click="selectPinnedAddress(addr)"
-                    >
-                        <span class="pinned-chip-text">{{ addr }}</span>
-                        <button
-                            type="button"
-                            class="pinned-chip-remove"
-                            @click.stop="removePinnedAddress(addr)"
-                            :aria-label="t('unpinAddress')"
-                        >
-                            <n-icon :component="CloseRound" :size="12" />
-                        </button>
-                    </span>
-                </div>
             </div>
         </div>
 
@@ -319,7 +400,20 @@ const deleteMail = async (curMailId) => {
     min-width: 0;
 }
 
-.filter-panel-header {
+.filter-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.filter-divider {
+    height: 1px;
+    background: var(--app-border);
+}
+
+.filter-panel-header,
+.priority-mailbox-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -331,6 +425,7 @@ const deleteMail = async (curMailId) => {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-shrink: 0;
 }
 
 .star-accent {
@@ -341,6 +436,12 @@ const deleteMail = async (curMailId) => {
     font-size: 13.5px;
     font-weight: 600;
     color: var(--app-text);
+}
+
+.priority-mailbox-picker {
+    width: min(360px, 100%);
+    flex: 1 1 240px;
+    max-width: 420px;
 }
 
 .view-segmented {
@@ -419,20 +520,6 @@ const deleteMail = async (curMailId) => {
     flex-shrink: 0;
 }
 
-.pinned-mailboxes-row {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding-top: 2px;
-}
-
-.pinned-label {
-    font-size: 12px;
-    color: var(--app-text-muted);
-    flex-shrink: 0;
-}
-
 .pinned-chips {
     display: flex;
     flex-wrap: wrap;
@@ -445,12 +532,12 @@ const deleteMail = async (curMailId) => {
     align-items: center;
     gap: 5px;
     max-width: 100%;
-    padding: 3px 8px 3px 10px;
+    padding: 4px 8px 4px 10px;
     border-radius: 999px;
     background: var(--app-surface);
     border: 1px solid var(--app-border);
     color: var(--app-text-secondary);
-    font-size: 12px;
+    font-size: 12.5px;
     font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     cursor: pointer;
     transition: all 0.14s var(--app-ease);
@@ -507,6 +594,10 @@ const deleteMail = async (curMailId) => {
         flex: 1;
         text-align: center;
         padding: 5px 6px;
+    }
+
+    .priority-mailbox-picker {
+        max-width: 100%;
     }
 
     .address-query-row {

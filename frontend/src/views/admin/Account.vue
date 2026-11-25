@@ -1,7 +1,7 @@
 <script setup>
 import { ref, h, onMounted, watch, computed } from 'vue';
 import { useLocalStorage } from '@vueuse/core';
-import { NBadge, useMessage, NButton, NDropdown } from 'naive-ui'
+import { NBadge, useMessage, NButton, NDropdown, NIcon } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
 import useClipboard from 'vue-clipboard3'
 
@@ -11,7 +11,7 @@ import { api } from '../../api'
 import { hashPassword, utcToLocalDate } from '../../utils'
 import {
     SearchRound, ContentCopyOutlined, KeyOutlined,
-    MailOutlineRound, MoreHorizRound
+    MailOutlineRound, MoreHorizRound, StarRound, StarBorderRound
 } from '@vicons/material'
 import AddressCredentialModal from '../../components/AddressCredentialModal.vue'
 
@@ -39,9 +39,12 @@ const isMobile = useIsMobile()
 const message = useMessage()
 const { toClipboard } = useClipboard()
 const localAddressCache = useLocalStorage('LocalAddressCache', [])
+const priorityAddresses = useLocalStorage('adminPriorityAddresses', [])
 
 const { t } = useScopedI18n('views.admin.Account')
-const { t: localT } = useScopedI18n('views.index.LocalAddress')
+const { t: mailT } = useScopedI18n('views.admin.Mails')
+
+const accountView = ref('all') // 'all' | 'priority'
 
 const showEmailCredential = ref(false)
 const curEmailCredential = ref("")
@@ -73,6 +76,25 @@ const showDeleteAccount = ref(false)
 const showClearInbox = ref(false)
 const showClearSentItems = ref(false)
 
+const isStarred = (name) => {
+    const normalized = String(name || '').trim().toLowerCase()
+    return normalized && priorityAddresses.value.includes(normalized)
+}
+
+const toggleStar = (name) => {
+    const normalized = String(name || '').trim().toLowerCase()
+    if (!normalized) return
+    if (priorityAddresses.value.includes(normalized)) {
+        priorityAddresses.value = priorityAddresses.value.filter(a => a !== normalized)
+        if (accountView.value === 'priority') {
+            data.value = data.value.filter(row => String(row.name || '').toLowerCase() !== normalized)
+            count.value = data.value.length
+        }
+    } else {
+        priorityAddresses.value = [normalized, ...priorityAddresses.value.filter(a => a !== normalized)]
+    }
+}
+
 const copyText = async (val) => {
     try {
         await toClipboard(val)
@@ -97,30 +119,6 @@ const openSendBoxForRow = (row) => {
         props.onViewSendBox(row.name)
     } else {
         adminTab.value = 'sendBox'
-    }
-}
-
-const enterMailboxForRow = async (row) => {
-    try {
-        loading.value = true
-        const resJwt = await api.adminShowAddressCredential(row.id)
-        if (!resJwt) {
-            message.error('jwt not found')
-            return
-        }
-        jwt.value = resJwt
-        if (!localAddressCache.value.includes(resJwt)) {
-            localAddressCache.value.push(resJwt)
-        }
-        if (props.onEnterMailbox) {
-            await props.onEnterMailbox(row)
-        } else {
-            location.reload()
-        }
-    } catch (error) {
-        message.error(error.message || 'error')
-    } finally {
-        loading.value = false
     }
 }
 
@@ -298,14 +296,52 @@ const multiActionClearSentItems = async () => {
     });
 }
 
+const fetchPriorityAccounts = async () => {
+    const q = addressQuery.value.trim().toLowerCase()
+    const targets = priorityAddresses.value.filter(addr => !q || addr.includes(q))
+    if (targets.length === 0) {
+        data.value = []
+        count.value = 0
+        return
+    }
+    loading.value = true
+    try {
+        const fetched = []
+        const chunkSize = 5
+        for (let i = 0; i < targets.length; i += chunkSize) {
+            const batch = targets.slice(i, i + chunkSize)
+            const results = await Promise.all(batch.map(async (addr) => {
+                try {
+                    const res = await api.fetch(
+                        `/admin/address?limit=10&offset=0&query=${encodeURIComponent(addr)}`,
+                        { showLoading: false }
+                    )
+                    return (res?.results || []).find(r => String(r.name || '').toLowerCase() === addr) || null
+                } catch {
+                    return null
+                }
+            }))
+            results.filter(Boolean).forEach(r => fetched.push(r))
+        }
+        data.value = fetched
+        count.value = fetched.length
+    } finally {
+        loading.value = false
+    }
+}
+
 const fetchData = async () => {
+    if (accountView.value === 'priority') {
+        await fetchPriorityAccounts()
+        return
+    }
     try {
         addressQuery.value = addressQuery.value.trim()
         const { results, count: addressCount } = await api.fetch(
             `/admin/address`
             + `?limit=${pageSize.value}`
             + `&offset=${(page.value - 1) * pageSize.value}`
-            + (addressQuery.value ? `&query=${addressQuery.value}` : "")
+            + (addressQuery.value ? `&query=${encodeURIComponent(addressQuery.value)}` : "")
             + (sortBy.value ? `&sort_by=${sortBy.value}` : "")
             + (sortOrder.value ? `&sort_order=${sortOrder.value}` : "")
         );
@@ -339,6 +375,7 @@ const handleSorterChange = (sorter) => {
 
 const getRowActionOptions = (row) => {
     const opts = [
+        { label: isStarred(row.name) ? mailT('unpinAddress') : mailT('pinAddress'), key: 'star' },
         { label: t('viewMails'), key: 'mails' },
         { label: t('showCredential'), key: 'credential' },
     ]
@@ -359,8 +396,8 @@ const getRowActionOptions = (row) => {
 }
 
 const handleRowAction = (key, row) => {
-    if (key === 'enter') {
-        enterMailboxForRow(row)
+    if (key === 'star') {
+        toggleStar(row.name)
     } else if (key === 'credential') {
         showCredential(row)
     } else if (key === 'mails') {
@@ -388,16 +425,24 @@ const columns = computed(() => [
         title: "ID",
         key: "id",
         width: 76,
-        sorter: true,
+        sorter: accountView.value === 'all',
         sortOrder: sortBy.value === 'id' ? sortOrder.value : false
     },
     {
         title: t('emailAddress'),
         key: "name",
-        sorter: true,
+        sorter: accountView.value === 'all',
         sortOrder: sortBy.value === 'name' ? sortOrder.value : false,
         render(row) {
+            const starred = isStarred(row.name)
             return h('div', { style: 'display: flex; align-items: center; gap: 6px;' }, [
+                h(NButton, {
+                    text: true,
+                    size: 'small',
+                    title: starred ? mailT('unpinAddress') : mailT('pinAddress'),
+                    style: starred ? 'color: #F59E0B;' : 'color: var(--app-text-muted);',
+                    onClick: () => toggleStar(row.name)
+                }, { icon: () => h(NIcon, { component: starred ? StarRound : StarBorderRound, size: 17 }) }),
                 h('span', { style: 'font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;' }, row.name),
                 h(NButton, {
                     text: true,
@@ -410,7 +455,7 @@ const columns = computed(() => [
     {
         title: t('created_at'),
         key: "created_at",
-        sorter: true,
+        sorter: accountView.value === 'all',
         sortOrder: sortBy.value === 'created_at' ? sortOrder.value : false,
         render(row) {
             return utcToLocalDate(row.created_at, useUTCDate.value);
@@ -419,7 +464,7 @@ const columns = computed(() => [
     {
         title: t('updated_at'),
         key: "updated_at",
-        sorter: true,
+        sorter: accountView.value === 'all',
         sortOrder: sortBy.value === 'updated_at' ? sortOrder.value : false,
         render(row) {
             return utcToLocalDate(row.updated_at, useUTCDate.value);
@@ -435,7 +480,7 @@ const columns = computed(() => [
     {
         title: t('source_meta'),
         key: "source_meta",
-        sorter: true,
+        sorter: accountView.value === 'all',
         sortOrder: sortBy.value === 'source_meta' ? sortOrder.value : false,
         render(row) {
             const val = row.source_meta;
@@ -455,7 +500,7 @@ const columns = computed(() => [
     {
         title: t('mail_count'),
         key: "mail_count",
-        sorter: true,
+        sorter: accountView.value === 'all',
         sortOrder: sortBy.value === 'mail_count' ? sortOrder.value : false,
         render(row) {
             return h(NButton,
@@ -478,7 +523,7 @@ const columns = computed(() => [
     {
         title: t('send_count'),
         key: "send_count",
-        sorter: true,
+        sorter: accountView.value === 'all',
         sortOrder: sortBy.value === 'send_count' ? sortOrder.value : false,
         render(row) {
             return h(NButton,
@@ -519,6 +564,14 @@ const columns = computed(() => [
 ])
 
 watch([page, pageSize], async () => {
+    if (accountView.value === 'all') {
+        await fetchData()
+    }
+})
+
+watch(accountView, async () => {
+    checkedRowKeys.value = []
+    page.value = 1
     await fetchData()
 })
 
@@ -571,9 +624,30 @@ onMounted(async () => {
             </template>
         </n-modal>
 
-        <!-- Search Bar -->
-        <div class="search-row">
-            <n-input-group>
+        <!-- View Switcher + Search Bar -->
+        <div class="top-filter-bar">
+            <div class="view-segmented">
+                <button
+                    type="button"
+                    class="view-seg-btn"
+                    :class="{ 'is-active': accountView === 'all' }"
+                    @click="accountView = 'all'"
+                >
+                    {{ t('emailAddress') }}
+                </button>
+                <button
+                    type="button"
+                    class="view-seg-btn"
+                    :class="{ 'is-active': accountView === 'priority' }"
+                    @click="accountView = 'priority'"
+                >
+                    <n-icon :component="StarRound" :size="14" class="star-icon" />
+                    <span>{{ mailT('priorityMailboxes').replace(/^★\s*/, '') }}</span>
+                    <span v-if="priorityAddresses.length > 0" class="count-pill">{{ priorityAddresses.length }}</span>
+                </button>
+            </div>
+
+            <n-input-group class="search-group">
                 <n-input v-model:value="addressQuery" clearable :placeholder="t('addressQueryTip')"
                     @keydown.enter="searchData">
                     <template #prefix><n-icon :component="SearchRound" /></template>
@@ -583,6 +657,10 @@ onMounted(async () => {
                 </n-button>
             </n-input-group>
         </div>
+
+        <n-alert v-if="accountView === 'priority' && priorityAddresses.length === 0" type="info" :bordered="false">
+            {{ mailT('noPriorityMailboxes') }}
+        </n-alert>
 
         <!-- Batch Action Bar -->
         <div v-if="showMultiActionBar" class="batch-bar">
@@ -612,7 +690,7 @@ onMounted(async () => {
         </div>
 
         <!-- Pagination -->
-        <div class="pager-row">
+        <div v-if="accountView === 'all'" class="pager-row">
             <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count"
                 :page-sizes="[20, 50, 100]" :simple="isMobile" size="small" show-size-picker>
                 <template #prefix="{ itemCount }">
@@ -623,12 +701,15 @@ onMounted(async () => {
 
         <!-- Mobile Card List -->
         <div v-if="isMobile" class="mobile-account-list">
-            <div v-for="row in data" :key="row.id" class="mobile-account-card">
+            <div v-for="row in data" :key="row.id" class="mobile-account-card" :class="{ 'is-starred': isStarred(row.name) }">
                 <div class="card-top-row">
                     <n-checkbox
                         :checked="checkedRowKeys.includes(row.id)"
                         @update:checked="(val) => toggleRowChecked(row.id, val)"
                     />
+                    <button type="button" class="mobile-star-btn" :class="{ 'is-on': isStarred(row.name) }" @click="toggleStar(row.name)">
+                        <n-icon :component="isStarred(row.name) ? StarRound : StarBorderRound" :size="18" />
+                    </button>
                     <span class="account-email">{{ row.name }}</span>
                     <n-button quaternary circle size="small" @click="copyText(row.name)">
                         <template #icon><n-icon :component="ContentCopyOutlined" /></template>
@@ -694,6 +775,65 @@ onMounted(async () => {
     gap: 12px;
 }
 
+.top-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.view-segmented {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 11px;
+    background: var(--app-surface-subtle);
+    border: 1px solid var(--app-border);
+    flex-shrink: 0;
+}
+
+.view-seg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--app-text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: all 0.14s var(--app-ease);
+    white-space: nowrap;
+}
+
+.view-seg-btn.is-active {
+    background: var(--app-surface);
+    color: var(--app-text);
+    font-weight: 600;
+    box-shadow: var(--app-shadow-xs);
+}
+
+.star-icon {
+    color: #F59E0B;
+}
+
+.count-pill {
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.16);
+    color: #D97706;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+.search-group {
+    flex: 1;
+    min-width: 220px;
+}
+
 .batch-bar {
     padding: 10px 12px;
     border-radius: 12px;
@@ -731,11 +871,31 @@ onMounted(async () => {
     gap: 8px;
 }
 
+.mobile-account-card.is-starred {
+    border-color: rgba(245, 158, 11, 0.35);
+}
+
 .card-top-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
+}
+
+.mobile-star-btn {
+    border: 0;
+    background: transparent;
+    padding: 2px;
+    color: var(--app-text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.mobile-star-btn.is-on {
+    color: #F59E0B;
 }
 
 .account-email {
@@ -777,5 +937,16 @@ onMounted(async () => {
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
+}
+
+@media (max-width: 640px) {
+    .view-segmented {
+        width: 100%;
+    }
+
+    .view-seg-btn {
+        flex: 1;
+        justify-content: center;
+    }
 }
 </style>
