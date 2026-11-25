@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue';
 import { useScopedI18n } from '@/i18n/app'
+import { CasinoOutlined } from '@vicons/material'
 
 import { useGlobalState } from '../../store'
 import { api } from '../../api'
@@ -80,7 +81,6 @@ const generateName = async () => {
             .replace(/\s+/g, '.')
             .replace(/\.{2,}/g, '.')
             .replace(addressRegex.value, '');
-        // support maxAddressLen
         if (emailName.value.length > openSettings.value.maxAddressLen) {
             emailName.value = emailName.value.slice(0, openSettings.value.maxAddressLen);
         }
@@ -154,10 +154,10 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div class="center">
+    <div class="create-account-wrap">
         <AddressCredentialModal v-model:show="showReultModal" :address="createdAddress" :jwt="result"
             :address-password="addressPassword" />
-        <n-card :bordered="false" embedded style="max-width: 600px;">
+        <div class="create-card">
             <n-form-item-row :label="t('creationMode')">
                 <n-radio-group v-model:value="creationMode" name="admin-creation-mode" :disabled="busy || generateNameLoading">
                     <n-space>
@@ -171,19 +171,30 @@ onMounted(async () => {
             </n-form-item-row>
             <n-form-item-row :label="t(creationMode === 'single' ? 'address' : 'domain')">
                 <n-spin :show="generateNameLoading" style="width: 100%;">
-                    <div>
-                        <n-button v-if="creationMode === 'single'" :disabled="busy" @click="generateName" style="margin-bottom: 10px;">
-                            {{ t('generateName') }}
-                        </n-button>
-                        <n-input-group>
-                            <n-input-group-label v-if="creationMode === 'single' && enablePrefix && openSettings.prefix">
-                                {{ openSettings.prefix }}
-                            </n-input-group-label>
-                            <n-input v-if="creationMode === 'single'" :disabled="busy" v-model:value="emailName" />
-                            <n-input-group-label v-if="creationMode === 'single'">@</n-input-group-label>
-                            <n-select :disabled="busy" v-model:value="emailDomain" :consistent-menu-width="false"
-                                :options="openSettings.domains" />
-                        </n-input-group>
+                    <div class="address-builder">
+                        <div v-if="creationMode === 'single'" class="name-row">
+                            <n-input-group class="name-group">
+                                <n-input-group-label v-if="enablePrefix && openSettings.prefix">
+                                    {{ openSettings.prefix }}
+                                </n-input-group-label>
+                                <n-input :disabled="busy" v-model:value="emailName" />
+                            </n-input-group>
+                            <n-button :disabled="busy" secondary @click="generateName" class="gen-btn">
+                                <template #icon><n-icon :component="CasinoOutlined" /></template>
+                                {{ t('generateName') }}
+                            </n-button>
+                        </div>
+                        <div class="domain-row">
+                            <span v-if="creationMode === 'single'" class="at-chip">@</span>
+                            <n-select
+                                :disabled="busy"
+                                v-model:value="emailDomain"
+                                filterable
+                                :consistent-menu-width="false"
+                                :options="openSettings.domains"
+                                class="domain-select"
+                            />
+                        </div>
                     </div>
                 </n-spin>
             </n-form-item-row>
@@ -215,22 +226,72 @@ onMounted(async () => {
                         style="width: 100%; margin-top: 8px;" />
                 </div>
             </n-form-item-row>
-            <n-button v-if="creationMode === 'single'" @click="newEmail" type="primary" block :loading="loading"
+            <n-button v-if="creationMode === 'single'" @click="newEmail" type="primary" block strong size="large" :loading="loading"
                 :disabled="busy || generateNameLoading || invalidDomain || invalidExpiry">
                 {{ t('createEmailAddress') }}
             </n-button>
             <BatchCreate v-show="creationMode === 'batch'" :options="batchOptions" :address-regex="addressRegex"
                 :disabled="invalidDomain || invalidExpiry || generateNameLoading || creationMode !== 'batch'" @busy="busy = $event" />
-        </n-card>
+        </div>
     </div>
 </template>
 
 <style scoped>
-.center {
-    display: flex;
+.create-account-wrap {
+    display: block;
+    padding: 4px 0;
+}
+
+.create-card {
+    width: min(680px, 100%);
     text-align: left;
-    place-items: center;
+}
+
+.address-builder {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.name-row,
+.domain-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.name-group,
+.domain-select {
+    flex: 1;
+    min-width: 0;
+}
+
+.gen-btn {
+    flex-shrink: 0;
+}
+
+.at-chip {
+    width: 36px;
+    height: 38px;
+    border-radius: 10px;
+    background: var(--app-surface-subtle);
+    border: 1px solid var(--app-border);
+    color: var(--app-text-secondary);
+    display: flex;
+    align-items: center;
     justify-content: center;
-    margin: 20px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+@media (max-width: 480px) {
+    .name-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .gen-btn {
+        width: 100%;
+    }
 }
 </style>

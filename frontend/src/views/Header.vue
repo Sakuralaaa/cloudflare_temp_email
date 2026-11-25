@@ -1,15 +1,16 @@
 <script setup>
-import { ref, h, computed, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useScopedI18n } from '@/i18n/app'
 import { useHead } from '@unhead/vue'
-import { useRoute, useRouter, RouterLink } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useIsMobile } from '../utils/composables'
 import {
-    DarkModeFilled, LightModeFilled, MenuFilled,
-    AdminPanelSettingsFilled, MonitorHeartFilled,
-    KeyboardArrowDownOutlined, OpenInNewOutlined
+    DarkModeOutlined, LightModeOutlined, MenuRound,
+    AdminPanelSettingsOutlined, MonitorHeartOutlined,
+    KeyboardArrowDownOutlined, OpenInNewOutlined,
+    MailOutlineRound, PersonOutlineRound, TranslateRound
 } from '@vicons/material'
-import { Envelope, GithubAlt, Language, User } from '@vicons/fa'
+import { GithubAlt } from '@vicons/fa'
 
 import { useGlobalState } from '../store'
 import { api } from '../api'
@@ -17,14 +18,13 @@ import { getRouterPathWithLang, hashPassword } from '../utils'
 import { DEFAULT_LOCALE, isSupportedLocale, replaceLocaleInFullPath } from '../i18n/utils'
 import { getLocaleLabel, SUPPORTED_LOCALES } from '../i18n/locale-registry'
 import Turnstile from '../components/Turnstile.vue'
-import { NButton, NIcon } from 'naive-ui'
 
 const message = useMessage()
 const notification = useNotification()
 
 const {
     toggleDark, isDark, isTelegram, showAdminPage, showUserSystem,
-    showAuth, auth, loading, openSettings, preferredLocale, userSettings
+    showAuth, auth, loading, openSettings, preferredLocale, userSettings, useSideMargin
 } = useGlobalState()
 const route = useRoute()
 const router = useRouter()
@@ -109,107 +109,40 @@ const showGithubForCurrentUser = computed(() => {
     return showAdminPage.value;
 });
 
-const menuOptions = computed(() => [
+const navItems = computed(() => [
     {
-        label: () => h(NButton,
-            {
-                text: true,
-                size: "small",
-                type: menuValue.value == "home" ? "primary" : "default",
-                style: "width: 100%",
-                onClick: async () => {
-                    await router.push(getRouterPathWithLang('/', locale.value));
-                    showMobileMenu.value = false;
-                }
-            },
-            {
-                default: () => t('mailbox'),
-                icon: () => h(NIcon, { component: Envelope })
-            }),
-        key: "home"
+        key: 'home',
+        label: t('mailbox'),
+        icon: MailOutlineRound,
+        show: true,
+        action: async () => {
+            await router.push(getRouterPathWithLang('/', locale.value));
+            showMobileMenu.value = false;
+        }
     },
     {
-        label: () => h(
-            NButton,
-            {
-                text: true,
-                size: "small",
-                type: menuValue.value == "user" ? "primary" : "default",
-                style: "width: 100%",
-                onClick: async () => {
-                    await router.push(getRouterPathWithLang("/user", locale.value));
-                    showMobileMenu.value = false;
-                }
-            },
-            {
-                default: () => t('userCenter'),
-                icon: () => h(NIcon, { component: User }),
-            }
-        ),
-        key: "user",
-        show: showUserSystem.value && !isTelegram.value
+        key: 'user',
+        label: t('userCenter'),
+        icon: PersonOutlineRound,
+        show: showUserSystem.value && !isTelegram.value && !showAdminPage.value,
+        action: async () => {
+            await router.push(getRouterPathWithLang('/user', locale.value));
+            showMobileMenu.value = false;
+        }
     },
     {
-        label: () => h(
-            NButton,
-            {
-                text: true,
-                size: "small",
-                type: menuValue.value == "admin" ? "primary" : "default",
-                style: "width: 100%",
-                onClick: async () => {
-                    loading.value = true;
-                    await router.push(getRouterPathWithLang('/admin', locale.value));
-                    loading.value = false;
-                    showMobileMenu.value = false;
-                }
-            },
-            {
-                default: () => t('admin'),
-                icon: () => h(NIcon, { component: AdminPanelSettingsFilled }),
-            }
-        ),
+        key: 'admin',
+        label: t('admin'),
+        icon: AdminPanelSettingsOutlined,
         show: showAdminPage.value,
-        key: "admin"
-    },
-    {
-        label: () => h(
-            NButton,
-            {
-                text: true,
-                size: "small",
-                style: "width: 100%",
-                onClick: () => { toggleDark(); showMobileMenu.value = false; }
-            },
-            {
-                default: () => isDark.value ? t('light') : t('dark'),
-                icon: () => h(
-                    NIcon, { component: isDark.value ? LightModeFilled : DarkModeFilled }
-                )
-            }
-        ),
-        key: "theme"
-    },
-    {
-        label: () => h(
-            NButton,
-            {
-                text: true,
-                size: "small",
-                style: "width: 100%",
-                tag: "a",
-                target: "_blank",
-                href: openSettings.value?.statusUrl,
-            },
-            {
-                default: () => t('status'),
-                icon: () => h(NIcon, { component: MonitorHeartFilled })
-            }
-        ),
-        show: !!openSettings.value?.statusUrl,
-        key: "status"
+        action: async () => {
+            loading.value = true;
+            await router.push(getRouterPathWithLang('/admin', locale.value));
+            loading.value = false;
+            showMobileMenu.value = false;
+        }
     }
-]);
+].filter(item => item.show));
 
 useHead({
     title: () => openSettings.value.title || t('title'),
@@ -240,85 +173,168 @@ const logoClick = async () => {
 
 onMounted(async () => {
     await api.getOpenSettings(message, notification);
-    // make sure user_id is fetched
     if (showUserSystem.value && !userSettings.value.user_id) await api.getUserSettings(message);
 });
 </script>
 
 <template>
-    <div>
-        <n-page-header>
-            <template #title>
-                <h3>{{ openSettings.title || t('title') }}</h3>
-            </template>
-            <template #avatar>
-                <div @click="logoClick">
-                    <n-avatar class="header-logo" src="/logo.png" />
-                </div>
-            </template>
-            <template #extra>
-                <n-space align="center" class="header-extra">
-                    <n-menu v-if="!isMobile" mode="horizontal" :options="menuOptions" responsive />
-                    <n-button v-else :text="true" @click="showMobileMenu = !showMobileMenu">
-                        <template #icon>
-                            <n-icon :component="MenuFilled" />
-                        </template>
-                        {{ t('menu') }}
-                    </n-button>
-                    <n-dropdown v-if="!isMobile" :options="languageOptions" @select="changeLocale" trigger="click" class="header-locale-dropdown">
-                        <n-button text size="small" class="header-locale-button" style="padding: 0 10px;">
-                            <template #icon>
-                                <n-icon :component="Language" />
-                            </template>
-                            {{ currentLocaleLabel }}
-                            <n-icon :component="KeyboardArrowDownOutlined" style="margin-left: 4px;" />
-                        </n-button>
-                    </n-dropdown>
-                    <n-button
-                        v-if="!isMobile && showGithubForCurrentUser"
-                        text
-                        size="small"
-                        class="header-version-button"
-                        tag="a"
-                        target="_blank"
-                        href="https://github.com/dreamhunter2333/cloudflare_temp_email"
+    <header class="app-header">
+        <div class="header-inner" :class="{ 'is-full': !isMobile && !useSideMargin }">
+            <!-- Brand -->
+            <div class="header-brand">
+                <button type="button" class="brand-logo-btn" @click="logoClick" aria-label="Logo">
+                    <img class="brand-logo" src="/logo.png" alt="Logo" />
+                </button>
+                <span class="brand-title">{{ openSettings.title || t('title') }}</span>
+            </div>
+
+            <!-- Desktop Center Navigation -->
+            <nav v-if="!isMobile && navItems.length > 0" class="header-nav" aria-label="Main navigation">
+                <button
+                    v-for="item in navItems"
+                    :key="item.key"
+                    type="button"
+                    class="nav-pill"
+                    :class="{ 'is-active': menuValue === item.key }"
+                    @click="item.action"
+                >
+                    <n-icon :component="item.icon" :size="16" />
+                    <span>{{ item.label }}</span>
+                </button>
+            </nav>
+
+            <!-- Right Controls -->
+            <div class="header-actions">
+                <a
+                    v-if="!isMobile && openSettings?.statusUrl"
+                    class="icon-action-btn"
+                    :href="openSettings.statusUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    :title="t('status')"
+                >
+                    <n-icon :component="MonitorHeartOutlined" :size="18" />
+                </a>
+
+                <n-dropdown
+                    v-if="!isMobile"
+                    :options="languageOptions"
+                    @select="changeLocale"
+                    trigger="click"
+                >
+                    <button type="button" class="locale-pill-btn">
+                        <n-icon :component="TranslateRound" :size="15" />
+                        <span>{{ currentLocaleLabel }}</span>
+                        <n-icon :component="KeyboardArrowDownOutlined" :size="15" class="chevron" />
+                    </button>
+                </n-dropdown>
+
+                <a
+                    v-if="!isMobile && showGithubForCurrentUser"
+                    class="icon-action-btn"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    href="https://github.com/dreamhunter2333/cloudflare_temp_email"
+                    :title="version || 'GitHub'"
+                >
+                    <n-icon :component="GithubAlt" :size="17" />
+                </a>
+
+                <button
+                    type="button"
+                    class="icon-action-btn"
+                    @click="toggleDark()"
+                    :title="isDark ? t('light') : t('dark')"
+                    :aria-label="isDark ? t('light') : t('dark')"
+                >
+                    <n-icon :component="isDark ? LightModeOutlined : DarkModeOutlined" :size="18" />
+                </button>
+
+                <button
+                    v-if="isMobile"
+                    type="button"
+                    class="icon-action-btn"
+                    @click="showMobileMenu = true"
+                    :aria-label="t('menu')"
+                >
+                    <n-icon :component="MenuRound" :size="20" />
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Slide-Over Menu Drawer -->
+        <n-drawer
+            v-model:show="showMobileMenu"
+            placement="right"
+            :width="290"
+            class="mobile-nav-drawer"
+        >
+            <n-drawer-content :title="openSettings.title || t('title')" closable>
+                <div class="drawer-section">
+                    <button
+                        v-for="item in navItems"
+                        :key="item.key"
+                        type="button"
+                        class="drawer-nav-item"
+                        :class="{ 'is-active': menuValue === item.key }"
+                        @click="item.action"
                     >
-                        <template #icon>
-                            <n-icon :component="GithubAlt" />
-                        </template>
-                        {{ version || 'Github' }}
-                    </n-button>
-                </n-space>
-            </template>
-        </n-page-header>
-        <n-drawer v-model:show="showMobileMenu" placement="top" style="height: 100vh;">
-            <n-drawer-content :title="t('menu')" closable>
-                <n-menu :options="menuOptions" />
-                <div class="mobile-menu-actions">
-                    <n-dropdown :options="languageOptions" @select="changeLocale" trigger="click" class="header-locale-dropdown">
-                        <button type="button" class="mobile-menu-utility-button">
-                            <n-icon :component="Language" />
-                            <span class="mobile-menu-action-label">{{ currentLocaleLabel }}</span>
-                            <n-icon :component="KeyboardArrowDownOutlined" class="mobile-menu-action-arrow" />
+                        <n-icon :component="item.icon" :size="19" />
+                        <span>{{ item.label }}</span>
+                    </button>
+                </div>
+
+                <div class="drawer-divider" />
+
+                <div class="drawer-section">
+                    <button
+                        type="button"
+                        class="drawer-nav-item"
+                        @click="toggleDark()"
+                    >
+                        <n-icon :component="isDark ? LightModeOutlined : DarkModeOutlined" :size="19" />
+                        <span>{{ isDark ? t('light') : t('dark') }}</span>
+                    </button>
+
+                    <n-dropdown :options="languageOptions" @select="changeLocale" trigger="click" placement="bottom-start">
+                        <button type="button" class="drawer-nav-item">
+                            <n-icon :component="TranslateRound" :size="19" />
+                            <span class="drawer-item-grow">{{ currentLocaleLabel }}</span>
+                            <n-icon :component="KeyboardArrowDownOutlined" :size="17" class="drawer-muted-icon" />
                         </button>
                     </n-dropdown>
+
+                    <a
+                        v-if="openSettings?.statusUrl"
+                        class="drawer-nav-item"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        :href="openSettings.statusUrl"
+                    >
+                        <n-icon :component="MonitorHeartOutlined" :size="19" />
+                        <span class="drawer-item-grow">{{ t('status') }}</span>
+                        <n-icon :component="OpenInNewOutlined" :size="15" class="drawer-muted-icon" />
+                    </a>
+
                     <a
                         v-if="showGithubForCurrentUser"
-                        class="mobile-menu-utility-button"
+                        class="drawer-nav-item"
                         target="_blank"
                         rel="noopener noreferrer"
                         href="https://github.com/dreamhunter2333/cloudflare_temp_email"
                     >
-                        <n-icon :component="GithubAlt" />
-                        <span class="mobile-menu-action-label">{{ version || 'Github' }}</span>
-                        <n-icon :component="OpenInNewOutlined" class="mobile-menu-action-arrow" />
+                        <n-icon :component="GithubAlt" :size="18" />
+                        <span class="drawer-item-grow">{{ version || 'GitHub' }}</span>
+                        <n-icon :component="OpenInNewOutlined" :size="15" class="drawer-muted-icon" />
                     </a>
                 </div>
             </n-drawer-content>
         </n-drawer>
+
+        <!-- Site Access Password Modal -->
         <n-modal v-model:show="showAuth" :closable="false" :closeOnEsc="false" :maskClosable="false" preset="dialog"
             :title="t('accessHeader')">
-            <p>{{ t('accessTip') }}</p>
+            <p class="auth-tip">{{ t('accessTip') }}</p>
             <n-input v-model:value="auth" type="password" show-password-on="click" @keyup.enter="authFunc" />
             <Turnstile ref="turnstileRef" v-if="openSettings.enableGlobalTurnstileCheck" v-model:value="cfToken" />
             <template #action>
@@ -327,168 +343,233 @@ onMounted(async () => {
                 </n-button>
             </template>
         </n-modal>
-    </div>
+    </header>
 </template>
 
 <style scoped>
-.header-logo {
-    margin-left: 10px;
+.app-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    width: 100%;
+    height: var(--app-header-height);
+    background: var(--app-glass);
+    backdrop-filter: saturate(180%) blur(18px);
+    -webkit-backdrop-filter: saturate(180%) blur(18px);
+    border-bottom: 1px solid var(--app-border);
+    padding-top: env(safe-area-inset-top, 0px);
 }
 
-:deep(.n-page-header) {
-    align-items: center;
-    flex-wrap: nowrap;
-}
-
-:deep(.n-page-header__main) {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-}
-
-:deep(.n-page-header__title) {
-    min-width: 0;
-    overflow: hidden;
-}
-
-:deep(.n-page-header__title h3) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-:deep(.n-page-header__extra) {
-    flex: 0 0 auto;
-}
-
-.n-layout-header {
+.header-inner {
+    height: 100%;
+    max-width: var(--app-max-width);
+    margin: 0 auto;
+    padding: 0 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
 }
 
-.header-extra {
-    align-items: center;
-    flex-wrap: nowrap;
+.header-inner.is-full {
+    max-width: 100%;
 }
 
-.header-extra :deep(.n-space-item) {
+.header-brand {
     display: flex;
     align-items: center;
+    gap: 10px;
+    min-width: 0;
 }
 
-.header-locale-button {
-    display: inline-flex;
-    align-items: center;
-}
-
-.header-locale-button :deep(.n-button__content) {
-    display: inline-flex;
-    align-items: center;
-}
-
-.header-locale-button :deep(.n-icon) {
-    display: inline-flex;
-    align-items: center;
-}
-
-.header-version-button {
-    display: inline-flex;
-    align-items: center;
-}
-
-.header-version-button :deep(.n-button__content) {
-    display: inline-flex;
-    align-items: center;
-}
-
-.mobile-menu-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(128, 128, 128, 0.16);
-}
-
-.mobile-menu-utility-button {
+.brand-logo-btn {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 36px;
-    width: 100%;
-    min-width: 0;
-    padding: 0 8px;
-    border: 0;
-    border-radius: 8px;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    text-decoration: none;
-    opacity: 0.82;
-    cursor: pointer;
+    border-radius: 10px;
+    flex-shrink: 0;
 }
 
-.mobile-menu-action-label {
-    margin: 0 6px;
-    min-width: 0;
+.brand-logo {
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
+    object-fit: cover;
+    box-shadow: var(--app-shadow-xs);
+}
+
+.brand-title {
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    color: var(--app-text);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.header-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px;
+    border-radius: 12px;
+    background: var(--app-surface-subtle);
+    border: 1px solid var(--app-border);
+}
+
+.nav-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 13px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--app-text-secondary);
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.16s var(--app-ease);
     white-space: nowrap;
 }
 
-.mobile-menu-action-arrow {
-    flex: 0 0 auto;
-    margin-left: 2px;
+.nav-pill:hover {
+    color: var(--app-text);
 }
 
-.n-alert {
-    margin-top: 10px;
-    margin-bottom: 10px;
-    text-align: center;
+.nav-pill.is-active {
+    background: var(--app-surface);
+    color: var(--app-text);
+    font-weight: 600;
+    box-shadow: var(--app-shadow-xs);
 }
 
-.n-card {
-    margin-top: 10px;
-}
-
-.center {
+.header-actions {
     display: flex;
-    text-align: left;
-    place-items: center;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.icon-action-btn {
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
-    margin: 20px;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--app-text-secondary);
+    cursor: pointer;
+    text-decoration: none;
+    transition: background-color 0.15s var(--app-ease), color 0.15s var(--app-ease);
 }
 
-.n-form .n-button {
-    margin-top: 10px;
+.icon-action-btn:hover {
+    background: var(--app-surface-subtle);
+    color: var(--app-text);
 }
 
-@media (width < 768px) {
-    :deep(.n-page-header) {
-        padding-inline: 16px;
-    }
-
-    .header-logo {
-        margin-left: 0;
-    }
+.locale-pill-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 9px;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface);
+    color: var(--app-text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s var(--app-ease);
 }
 
-@media (max-width: 640px) {
-    :deep(.n-page-header) {
-        padding-block: 10px;
-    }
-
-    :deep(.n-page-header__title) {
-        min-width: 0;
-    }
-
-    :deep(.n-page-header__title h3) {
-        max-width: calc(100vw - 104px);
-        margin: 0;
-        font-size: clamp(16px, 5vw, 20px);
-        line-height: 1.2;
-    }
+.locale-pill-btn:hover {
+    color: var(--app-text);
+    border-color: var(--app-border-strong);
 }
 
+.locale-pill-btn .chevron {
+    opacity: 0.6;
+}
+
+.drawer-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.drawer-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 11px 12px;
+    border: 0;
+    border-radius: 11px;
+    background: transparent;
+    color: var(--app-text);
+    font-size: 15px;
+    font-weight: 500;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.15s var(--app-ease);
+}
+
+.drawer-nav-item:hover,
+.drawer-nav-item:active {
+    background: var(--app-surface-subtle);
+}
+
+.drawer-nav-item.is-active {
+    background: var(--app-accent-soft);
+    color: var(--app-accent);
+    font-weight: 600;
+}
+
+.drawer-item-grow {
+    flex: 1;
+    min-width: 0;
+}
+
+.drawer-muted-icon {
+    color: var(--app-text-muted);
+}
+
+.drawer-divider {
+    height: 1px;
+    background: var(--app-border);
+    margin: 12px 0;
+}
+
+.auth-tip {
+    margin: 0 0 12px;
+    color: var(--app-text-secondary);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+@media (max-width: 767px) {
+    .header-inner {
+        padding: 0 12px;
+    }
+
+    .brand-logo {
+        width: 28px;
+        height: 28px;
+    }
+
+    .brand-title {
+        font-size: 15.5px;
+    }
+}
 </style>

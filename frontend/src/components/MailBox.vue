@@ -1,9 +1,13 @@
 <script setup>
 import { watch, onMounted, ref, onBeforeUnmount, computed } from "vue";
-import { useMessage, useThemeVars } from 'naive-ui'
+import { useMessage } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
 import { useGlobalState } from '../store'
-import { CloudDownloadRound, ArrowBackIosNewFilled, ArrowForwardIosFilled, InboxRound } from '@vicons/material'
+import {
+  CloudDownloadRound, ArrowBackIosNewFilled, ArrowForwardIosFilled,
+  InboxOutlined, RefreshRound, SearchRound, ChecklistRtlRound,
+  AutorenewRound, DeleteOutlineRound, CloseRound, DoneAllRound
+} from '@vicons/material'
 import { useIsMobile } from '../utils/composables'
 import { processItem } from '../utils/email-parser'
 import { buildReplyModel, buildForwardModel } from '../utils/mail-actions'
@@ -11,7 +15,6 @@ import MailContentRenderer from "./MailContentRenderer.vue";
 import MailSummary from "./MailSummary.vue";
 
 const message = useMessage()
-const themeVars = useThemeVars()
 const isMobile = useIsMobile()
 
 const props = defineProps({
@@ -63,6 +66,14 @@ const props = defineProps({
     type: Function,
     default: () => { }
   },
+  onReplyMail: {
+    type: Function,
+    default: null
+  },
+  onForwardMail: {
+    type: Function,
+    default: null
+  },
 })
 
 const localFilterKeyword = ref('')
@@ -78,6 +89,7 @@ const timer = ref(null)
 const count = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+const isRefreshing = ref(false)
 
 const mailListPreviewLineClampValue = computed(() => {
   const value = Number(mailListPreviewLineClamp.value)
@@ -85,22 +97,23 @@ const mailListPreviewLineClampValue = computed(() => {
   return Math.min(5, Math.max(0, Math.round(value)))
 })
 
-// Computed property for filtered data (only filter current page)
 const data = computed(() => {
   if (!localFilterKeyword.value || localFilterKeyword.value.trim() === '') {
     return rawData.value;
   }
   const keyword = localFilterKeyword.value.toLowerCase();
   return rawData.value.filter(mail => {
-    // Search in subject, text, message fields
     const searchFields = [
       mail.subject || '',
       mail.text || '',
+      mail.source || '',
       mail.message || ''
     ].map(field => field.toLowerCase());
     return searchFields.some(field => field.includes(keyword));
   });
 })
+
+const selectedCount = computed(() => data.value.filter(m => m.checked).length)
 
 const openMail = (mail) => {
   curMail.value = mail
@@ -168,6 +181,12 @@ const nextMail = async () => {
 }
 
 const curMail = ref(null);
+const mobileReaderVisible = computed({
+  get: () => Boolean(curMail.value),
+  set: (val) => {
+    if (!val) curMail.value = null;
+  }
+});
 
 const multiActionMode = ref(false)
 const showMultiActionDownload = ref(false)
@@ -177,10 +196,9 @@ const multiActionDeleteProgress = ref({ percentage: 0, tip: '0/0' })
 
 const { t } = useScopedI18n('components.MailBox')
 
-const setupAutoRefresh = async (autoRefresh) => {
-  // auto refresh every configAutoRefreshInterval seconds
+const setupAutoRefresh = async (enabled) => {
   autoRefreshInterval.value = configAutoRefreshInterval.value;
-  if (autoRefresh) {
+  if (enabled) {
     clearInterval(timer.value);
     timer.value = setInterval(async () => {
       if (loading.value) return;
@@ -196,50 +214,51 @@ const setupAutoRefresh = async (autoRefresh) => {
   }
 }
 
-watch(autoRefresh, async (autoRefresh, old) => {
-  setupAutoRefresh(autoRefresh)
+watch(autoRefresh, async (val) => {
+  setupAutoRefresh(val)
 }, { immediate: true })
 
 let loadedPage = { page: page.value, pageSize: pageSize.value }
 let requestedPage = null
-watch([page, pageSize], async ([page, pageSize]) => {
-  if (requestedPage?.page === page && requestedPage.pageSize === pageSize) return
-  if (loadedPage.page !== page || loadedPage.pageSize !== pageSize) {
+watch([page, pageSize], async ([p, ps]) => {
+  if (requestedPage?.page === p && requestedPage.pageSize === ps) return
+  if (loadedPage.page !== p || loadedPage.pageSize !== ps) {
     await refresh();
   }
 })
 
 const refresh = async () => {
-  const pagination = { page: page.value, pageSize: pageSize.value }
-  requestedPage = pagination
+  const targetPage = page.value
+  const targetPageSize = pageSize.value
+  requestedPage = { page: targetPage, pageSize: targetPageSize }
+  isRefreshing.value = true
   try {
     const { results, count: totalCount } = await props.fetchMailData(
-      pagination.pageSize, (pagination.page - 1) * pagination.pageSize
+      targetPageSize, (targetPage - 1) * targetPageSize
     );
     loading.value = true;
     rawData.value = await Promise.all(results.map(async (item) => {
       item.checked = false;
       return await processItem(item);
     }));
-    loadedPage = pagination
-    if (totalCount > 0) {
+    if (totalCount >= 0) {
       count.value = totalCount;
     }
-    curMail.value = null;
-    if (!isMobile.value && !mailListView.value && data.value.length > 0) {
-      curMail.value = data.value[0];
+    loadedPage = { page: targetPage, pageSize: targetPageSize }
+    if (!isMobile.value && !mailListView.value && !curMail.value && data.value.length > 0) {
+      openMail(data.value[0]);
     }
     return true
   } catch (error) {
+    page.value = loadedPage.page
+    pageSize.value = loadedPage.pageSize
     message.error(error.message || "error");
     console.error(error);
-    if (requestedPage === pagination && page.value === pagination.page && pageSize.value === pagination.pageSize) {
-      page.value = loadedPage.page
-      pageSize.value = loadedPage.pageSize
-    }
+    return false
   } finally {
-    if (requestedPage === pagination) requestedPage = null
+    requestedPage = null
     loading.value = false;
+    isRefreshing.value = false;
   }
 };
 
@@ -248,23 +267,19 @@ const backFirstPageAndRefresh = async () => {
   await refresh();
 }
 
-const clickRow = (row) => {
+const clickRow = async (row) => {
   if (multiActionMode.value) {
     row.checked = !row.checked;
-    curMail.value = row;
-    return;
-  }
-  if (mailListView.value && curMail.value?.id === row.id) {
-    curMail.value = null;
     return;
   }
   openMail(row);
 };
 
+const isSelected = (row) => Boolean(curMail.value && row.id == curMail.value.id);
 
-const mailItemClass = (row) => {
-  return curMail.value && row.id == curMail.value.id ? (isDark.value ? 'overlay overlay-dark-backgroud' : 'overlay overlay-light-backgroud') : '';
-};
+const onSpiltSizeChange = (size) => {
+  mailboxSplitSize.value = size;
+}
 
 const deleteMail = async () => {
   try {
@@ -278,18 +293,24 @@ const deleteMail = async () => {
 };
 
 const replyMail = async () => {
-  Object.assign(sendMailModel.value, buildReplyModel(curMail.value, t('reply')));
+  const model = buildReplyModel(curMail.value, t);
+  if (props.onReplyMail) {
+    props.onReplyMail(curMail.value, model);
+    return;
+  }
+  sendMailModel.value = model;
   indexTab.value = 'sendmail';
 };
 
 const forwardMail = async () => {
-  Object.assign(sendMailModel.value, buildForwardModel(curMail.value, t('forwardMail')));
+  const model = buildForwardModel(curMail.value, t);
+  if (props.onForwardMail) {
+    props.onForwardMail(curMail.value, model);
+    return;
+  }
+  sendMailModel.value = model;
   indexTab.value = 'sendmail';
 };
-
-const onSpiltSizeChange = (size) => {
-  mailboxSplitSize.value = size;
-}
 
 const saveToS3Proxy = async (filename, blob) => {
   await props.saveToS3(curMail.value.id, filename, blob);
@@ -297,26 +318,19 @@ const saveToS3Proxy = async (filename, blob) => {
 
 const multiActionModeClick = (enableMulti) => {
   if (enableMulti) {
-    data.value.forEach((item) => {
-      item.checked = false;
-    });
+    data.value.forEach((item) => { item.checked = false; });
     multiActionMode.value = true;
   } else {
     multiActionMode.value = false;
-    data.value.forEach((item) => {
-      item.checked = false;
-    });
+    data.value.forEach((item) => { item.checked = false; });
   }
 }
 
 const multiActionSelectAll = (checked) => {
-  data.value.forEach((item) => {
-    item.checked = checked;
-  });
+  data.value.forEach((item) => { item.checked = checked; });
 }
 
 const multiActionDeleteMail = async () => {
-  const deletedIds = new Set()
   try {
     loading.value = true;
     const selectedMails = data.value.filter((item) => item.checked);
@@ -330,22 +344,20 @@ const multiActionDeleteMail = async () => {
     };
     for (const [index, mail] of selectedMails.entries()) {
       await props.deleteMail(mail.id);
-      deletedIds.add(mail.id)
+      showMultiActionDelete.value = true;
       multiActionDeleteProgress.value = {
         percentage: Math.floor((index + 1) / selectedMails.length * 100),
         tip: `${index + 1}/${selectedMails.length}`
       };
     }
-    showMultiActionDelete.value = true;
     message.success(t("success"));
+    multiActionMode.value = false;
     await refresh();
   } catch (error) {
-    rawData.value = rawData.value.filter(mail => !deletedIds.has(mail.id))
-    count.value = Math.max(0, count.value - deletedIds.size)
-    if (deletedIds.has(curMail.value?.id)) curMail.value = null
     message.error(error.message || "error");
   } finally {
     loading.value = false;
+    showMultiActionDelete.value = true;
   }
 }
 
@@ -385,186 +397,401 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
-    <div v-if="!isMobile" class="left">
-      <div style="margin-bottom: 10px;">
-        <n-space v-if="multiActionMode" align="center">
-          <n-button @click="multiActionModeClick(false)" tertiary>
-            {{ t('cancelMultiAction') }}
-          </n-button>
-          <n-button @click="multiActionSelectAll(true)" tertiary>
-            {{ t('selectAll') }}
-          </n-button>
-          <n-button @click="multiActionSelectAll(false)" tertiary>
-            {{ t('unselectAll') }}
-          </n-button>
-          <n-popconfirm v-if="enableUserDeleteEmail" @positive-click="multiActionDeleteMail">
-            <template #trigger>
-              <n-button tertiary type="error">{{ t('delete') }}</n-button>
-            </template>
-            {{ t('deleteMailTip') }}
-          </n-popconfirm>
-          <n-button @click="multiActionDownload" tertiary type="info">
-            <template #icon>
-              <n-icon :component="CloudDownloadRound" />
-            </template>
-            {{ t('downloadMail') }}
-          </n-button>
-        </n-space>
-        <n-space v-else align="center">
-          <n-button @click="multiActionModeClick(true)" type="primary" tertiary>
-            {{ t('multiAction') }}
-          </n-button>
-          <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count" :page-sizes="[20, 50, 100]"
-            show-size-picker />
-          <n-switch v-model:value="autoRefresh" :round="false">
-            <template #checked>
-              {{ t('refreshAfter', { msg: autoRefreshInterval }) }}
-            </template>
-            <template #unchecked>
-              {{ t('autoRefresh') }}
-            </template>
-          </n-switch>
-          <n-button @click="backFirstPageAndRefresh" type="primary" tertiary>
-            {{ t('refresh') }}
-          </n-button>
-          <n-input v-if="showFilterInput" v-model:value="localFilterKeyword"
-            :placeholder="t('keywordQueryTip')" style="width: 200px; display: flex; align-items: center;"
-            clearable />
-        </n-space>
+  <div class="mailbox-root">
+    <!-- ==================== DESKTOP WORKSPACE ==================== -->
+    <div v-if="!isMobile" class="mailbox-desktop app-surface-card">
+      <!-- Integrated Toolbar -->
+      <div class="mailbox-toolbar">
+        <template v-if="multiActionMode">
+          <div class="toolbar-group">
+            <n-button @click="multiActionModeClick(false)" size="small" quaternary>
+              <template #icon><n-icon :component="CloseRound" /></template>
+              {{ t('cancelMultiAction') }}
+            </n-button>
+            <n-button @click="multiActionSelectAll(true)" size="small" secondary>
+              {{ t('selectAll') }}
+            </n-button>
+            <n-button @click="multiActionSelectAll(false)" size="small" quaternary>
+              {{ t('unselectAll') }}
+            </n-button>
+            <span v-if="selectedCount > 0" class="selected-badge">{{ selectedCount }}</span>
+          </div>
+          <div class="toolbar-group">
+            <n-button @click="multiActionDownload" size="small" secondary type="primary">
+              <template #icon><n-icon :component="CloudDownloadRound" /></template>
+              {{ t('downloadMail') }}
+            </n-button>
+            <n-popconfirm v-if="enableUserDeleteEmail" @positive-click="multiActionDeleteMail">
+              <template #trigger>
+                <n-button size="small" secondary type="error">
+                  <template #icon><n-icon :component="DeleteOutlineRound" /></template>
+                  {{ t('delete') }}
+                </n-button>
+              </template>
+              {{ t('deleteMailTip') }}
+            </n-popconfirm>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="toolbar-group toolbar-left">
+            <n-button @click="backFirstPageAndRefresh" size="small" type="primary" secondary :loading="isRefreshing">
+              <template #icon><n-icon :component="RefreshRound" /></template>
+              {{ t('refresh') }}
+            </n-button>
+
+            <button
+              type="button"
+              class="auto-refresh-pill"
+              :class="{ 'is-on': autoRefresh }"
+              @click="autoRefresh = !autoRefresh"
+              :title="t('autoRefresh')"
+            >
+              <n-icon :component="AutorenewRound" :size="15" :class="{ 'spin-slow': autoRefresh }" />
+              <span>{{ autoRefresh ? t('refreshAfter', { msg: autoRefreshInterval }) : t('autoRefresh') }}</span>
+            </button>
+
+            <n-button @click="multiActionModeClick(true)" size="small" quaternary>
+              <template #icon><n-icon :component="ChecklistRtlRound" /></template>
+              {{ t('multiAction') }}
+            </n-button>
+
+            <n-input
+              v-if="showFilterInput"
+              v-model:value="localFilterKeyword"
+              :placeholder="t('keywordQueryTip')"
+              size="small"
+              clearable
+              class="desktop-search-input"
+            >
+              <template #prefix>
+                <n-icon :component="SearchRound" />
+              </template>
+            </n-input>
+          </div>
+
+          <div class="toolbar-group toolbar-right">
+            <n-pagination
+              v-model:page="page"
+              v-model:page-size="pageSize"
+              :item-count="count"
+              :page-sizes="[20, 50, 100]"
+              size="small"
+              show-size-picker
+            />
+          </div>
+        </template>
       </div>
-      <n-split class="left" direction="horizontal" :max="0.75" :min="0" :resize-trigger-size="8"
-        :default-size="mailboxSplitSize" :on-update:size="onSpiltSizeChange" v-if="!mailListView || curMail">
+
+      <!-- Split View or Full List -->
+      <n-split
+        v-if="!mailListView || curMail"
+        class="mailbox-split"
+        direction="horizontal"
+        :max="0.65"
+        :min="0.18"
+        :resize-trigger-size="6"
+        :default-size="mailboxSplitSize < 0.18 ? 0.3 : mailboxSplitSize"
+        :on-update:size="onSpiltSizeChange"
+      >
         <template #resize-trigger>
           <div class="split-handle">
             <div class="split-handle__grip" />
           </div>
         </template>
+
         <template #1>
-          <div class="mail-list-scroll mail-list-compact">
-            <n-list hoverable clickable>
-              <n-list-item v-for="row in data" v-bind:key="row.id" @click="() => clickRow(row)"
-                :class="[mailItemClass(row), { 'mail-list-unread': enableMailReadStatus && row.is_unread === 1 }]">
-                <template #prefix v-if="multiActionMode">
-                  <n-checkbox v-model:checked="row.checked" @click.stop />
-                </template>
-                <MailSummary :mail="row" :showEMailTo="showEMailTo" :enableMailReadStatus="enableMailReadStatus"
-                  :previewLineClamp="mailListPreviewLineClampValue" />
-              </n-list-item>
-            </n-list>
+          <div class="mail-list-pane">
+            <div v-if="data.length === 0" class="empty-list-state">
+              <div class="empty-icon-circle">
+                <n-icon :component="InboxOutlined" :size="28" />
+              </div>
+              <p class="empty-title">{{ t('emptyInbox') }}</p>
+            </div>
+            <div v-else class="mail-list">
+              <div
+                v-for="row in data"
+                :key="row.id"
+                class="mail-row"
+                :class="{
+                  'is-selected': isSelected(row),
+                  'is-unread': enableMailReadStatus && row.is_unread === 1
+                }"
+                @click="() => clickRow(row)"
+              >
+                <n-checkbox
+                  v-if="multiActionMode"
+                  v-model:checked="row.checked"
+                  class="mail-row-checkbox"
+                  @click.stop
+                />
+                <MailSummary
+                  :mail="row"
+                  :showEMailTo="showEMailTo"
+                  :enableMailReadStatus="enableMailReadStatus"
+                  :previewLineClamp="mailListPreviewLineClampValue"
+                />
+              </div>
+            </div>
           </div>
         </template>
+
         <template #2>
-          <div v-if="curMail" style="margin: 8px;">
-            <n-flex justify="space-between" align="center">
-              <n-space :wrap="false" align="center">
-                <n-button v-if="mailListView" @click="curMail = null" text size="small">
-                  <template #icon>
-                    <n-icon>
-                      <ArrowBackIosNewFilled />
-                    </n-icon>
-                  </template>
-                  {{ t('backToList') }}
-                </n-button>
-                <n-button @click="prevMail" :disabled="!canGoPrevMail" text size="small">
-                  <template #icon>
-                    <n-icon>
-                      <ArrowBackIosNewFilled />
-                    </n-icon>
-                  </template>
-                  {{ t('prevMail') }}
-                </n-button>
-              </n-space>
-              <n-button @click="nextMail" :disabled="!canGoNextMail" text size="small" icon-placement="right">
-                <template #icon>
-                  <n-icon>
-                    <ArrowForwardIosFilled />
-                  </n-icon>
-                </template>
-                {{ t('nextMail') }}
-              </n-button>
-            </n-flex>
+          <div class="mail-reader-pane">
+            <template v-if="curMail">
+              <div class="reader-nav-bar">
+                <div class="reader-nav-left">
+                  <n-button v-if="mailListView" @click="curMail = null" quaternary size="small">
+                    <template #icon><n-icon :component="ArrowBackIosNewFilled" /></template>
+                    {{ t('backToList') }}
+                  </n-button>
+                </div>
+                <div class="reader-nav-right">
+                  <n-button @click="prevMail" :disabled="!canGoPrevMail" quaternary size="small">
+                    <template #icon><n-icon :component="ArrowBackIosNewFilled" /></template>
+                    {{ t('prevMail') }}
+                  </n-button>
+                  <n-button @click="nextMail" :disabled="!canGoNextMail" quaternary size="small" icon-placement="right">
+                    <template #icon><n-icon :component="ArrowForwardIosFilled" /></template>
+                    {{ t('nextMail') }}
+                  </n-button>
+                </div>
+              </div>
+
+              <div class="reader-scroll-body">
+                <h2 class="reader-subject">{{ curMail.subject || '—' }}</h2>
+                <MailContentRenderer
+                  :mail="curMail"
+                  :showEMailTo="showEMailTo"
+                  :enableUserDeleteEmail="enableUserDeleteEmail"
+                  :showReply="showReply"
+                  :showSaveS3="showSaveS3"
+                  :enableMailReadStatus="enableMailReadStatus"
+                  :onUpdateMailReadStatus="toggleCurrentMailUnread"
+                  :onDelete="deleteMail"
+                  :onReply="replyMail"
+                  :onForward="forwardMail"
+                  :onSaveToS3="saveToS3Proxy"
+                />
+              </div>
+            </template>
+
+            <div v-else class="reader-empty-state">
+              <div class="empty-icon-circle large">
+                <n-icon :component="InboxOutlined" :size="36" />
+              </div>
+              <p class="empty-title">{{ count === 0 ? t('emptyInbox') : t('pleaseSelectMail') }}</p>
+            </div>
           </div>
-          <n-card :bordered="false" v-if="curMail" class="mail-item" :title="curMail.subject"
-            style="overflow: auto; max-height: 100vh;">
-            <MailContentRenderer :mail="curMail" :showEMailTo="showEMailTo"
-              :enableUserDeleteEmail="enableUserDeleteEmail" :showReply="showReply" :showSaveS3="showSaveS3"
-              :enableMailReadStatus="enableMailReadStatus" :onUpdateMailReadStatus="toggleCurrentMailUnread"
-              :onDelete="deleteMail" :onReply="replyMail" :onForward="forwardMail" :onSaveToS3="saveToS3Proxy" />
-          </n-card>
-          <n-card :bordered="false" embedded class="mail-item" v-else>
-            <n-result status="info" :title="count === 0 ? t('emptyInbox') : t('pleaseSelectMail')">
-              <template #icon>
-                <n-icon :component="InboxRound" :size="100" />
-              </template>
-            </n-result>
-          </n-card>
         </template>
       </n-split>
-      <div v-else class="mail-list-scroll mail-list-compact">
-        <n-list hoverable clickable>
-          <n-list-item v-for="row in data" v-bind:key="row.id" @click="() => clickRow(row)"
-            :class="[mailItemClass(row), { 'mail-list-unread': enableMailReadStatus && row.is_unread === 1 }]">
-            <template #prefix v-if="multiActionMode">
-              <n-checkbox v-model:checked="row.checked" @click.stop />
-            </template>
-            <MailSummary :mail="row" :showEMailTo="showEMailTo" :enableMailReadStatus="enableMailReadStatus"
-              :previewLineClamp="mailListPreviewLineClampValue" />
-          </n-list-item>
-        </n-list>
+
+      <div v-else class="mail-list-pane full-height">
+        <div v-if="data.length === 0" class="empty-list-state">
+          <div class="empty-icon-circle">
+            <n-icon :component="InboxOutlined" :size="28" />
+          </div>
+          <p class="empty-title">{{ t('emptyInbox') }}</p>
+        </div>
+        <div v-else class="mail-list">
+          <div
+            v-for="row in data"
+            :key="row.id"
+            class="mail-row"
+            :class="{
+              'is-selected': isSelected(row),
+              'is-unread': enableMailReadStatus && row.is_unread === 1
+            }"
+            @click="() => clickRow(row)"
+          >
+            <n-checkbox
+              v-if="multiActionMode"
+              v-model:checked="row.checked"
+              class="mail-row-checkbox"
+              @click.stop
+            />
+            <MailSummary
+              :mail="row"
+              :showEMailTo="showEMailTo"
+              :enableMailReadStatus="enableMailReadStatus"
+              :previewLineClamp="mailListPreviewLineClampValue"
+            />
+          </div>
+        </div>
       </div>
     </div>
-    <div class="left" v-else>
-      <n-space justify="space-between" align="center" :size="[8, 8]">
-        <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count" simple size="small" />
-        <n-switch v-model:value="autoRefresh" size="small" :round="false">
-          <template #checked>
-            {{ t('refreshAfter', { msg: autoRefreshInterval }) }}
-          </template>
-          <template #unchecked>
-            {{ t('autoRefresh') }}
-          </template>
-        </n-switch>
-        <n-button @click="backFirstPageAndRefresh" tertiary size="small" type="primary">
-          {{ t('refresh') }}
-        </n-button>
-      </n-space>
-      <div v-if="showFilterInput" style="padding: 0 10px; margin-top: 8px; margin-bottom: 10px;">
-        <n-input v-model:value="localFilterKeyword"
-          :placeholder="t('keywordQueryTip')" size="small" clearable />
-      </div>
-      <div class="mail-list-scroll mail-list-compact">
-        <n-list hoverable clickable>
-          <n-list-item v-for="row in data" v-bind:key="row.id" @click="() => clickRow(row)"
-            :class="{ 'mail-list-unread': enableMailReadStatus && row.is_unread === 1 }">
-            <MailSummary :mail="row" :showEMailTo="showEMailTo" :enableMailReadStatus="enableMailReadStatus"
-              :previewLineClamp="mailListPreviewLineClampValue" />
-          </n-list-item>
-        </n-list>
-      </div>
-      <n-drawer v-model:show="curMail" width="100%" placement="bottom" :trap-focus="false" :block-scroll="false"
-        style="height: 80vh;">
-        <n-drawer-content :title="curMail ? curMail.subject : ''" closable>
-          <div class="mail-mobile-reader">
-            <MailContentRenderer :mail="curMail" :showEMailTo="showEMailTo"
-              :enableUserDeleteEmail="enableUserDeleteEmail" :showReply="showReply" :showSaveS3="showSaveS3"
-              :enableMailReadStatus="enableMailReadStatus" :onUpdateMailReadStatus="toggleCurrentMailUnread"
-              :onDelete="deleteMail" :onReply="replyMail" :onForward="forwardMail"
-              :onSaveToS3="saveToS3Proxy" />
+
+    <!-- ==================== MOBILE WORKSPACE ==================== -->
+    <div v-else class="mailbox-mobile">
+      <!-- Compact Search + Quick Controls -->
+      <div class="mobile-controls">
+        <div v-if="showFilterInput" class="mobile-search-wrap">
+          <n-input
+            v-model:value="localFilterKeyword"
+            :placeholder="t('keywordQueryTip')"
+            clearable
+            round
+            class="mobile-search-input"
+          >
+            <template #prefix>
+              <n-icon :component="SearchRound" />
+            </template>
+          </n-input>
+        </div>
+
+        <!-- Normal Action Row -->
+        <div v-if="!multiActionMode" class="mobile-toolbar-row">
+          <div class="mobile-toolbar-left">
+            <n-button @click="backFirstPageAndRefresh" type="primary" secondary size="small" :loading="isRefreshing">
+              <template #icon><n-icon :component="RefreshRound" /></template>
+              {{ t('refresh') }}
+            </n-button>
+            <button
+              type="button"
+              class="auto-refresh-pill compact"
+              :class="{ 'is-on': autoRefresh }"
+              @click="autoRefresh = !autoRefresh"
+            >
+              <n-icon :component="AutorenewRound" :size="14" :class="{ 'spin-slow': autoRefresh }" />
+              <span>{{ autoRefresh ? `${autoRefreshInterval}s` : t('autoRefresh') }}</span>
+            </button>
           </div>
-        </n-drawer-content>
+          <div class="mobile-toolbar-right">
+            <n-button @click="multiActionModeClick(true)" quaternary size="small" :title="t('multiAction')">
+              <template #icon><n-icon :component="ChecklistRtlRound" /></template>
+            </n-button>
+            <n-pagination
+              v-if="count > pageSize"
+              v-model:page="page"
+              v-model:page-size="pageSize"
+              :item-count="count"
+              simple
+              size="small"
+            />
+          </div>
+        </div>
+
+        <!-- Mobile Multi-Select Bar -->
+        <div v-else class="mobile-multi-bar">
+          <div class="mobile-multi-left">
+            <n-button @click="multiActionModeClick(false)" quaternary size="small">
+              <template #icon><n-icon :component="CloseRound" /></template>
+            </n-button>
+            <n-button @click="multiActionSelectAll(selectedCount < data.length)" secondary size="small">
+              <template #icon><n-icon :component="DoneAllRound" /></template>
+              {{ selectedCount < data.length ? t('selectAll') : t('unselectAll') }}
+            </n-button>
+            <span class="selected-badge">{{ selectedCount }}</span>
+          </div>
+          <div class="mobile-multi-right">
+            <n-button @click="multiActionDownload" secondary type="primary" size="small">
+              <template #icon><n-icon :component="CloudDownloadRound" /></template>
+            </n-button>
+            <n-popconfirm v-if="enableUserDeleteEmail" @positive-click="multiActionDeleteMail">
+              <template #trigger>
+                <n-button secondary type="error" size="small">
+                  <template #icon><n-icon :component="DeleteOutlineRound" /></template>
+                </n-button>
+              </template>
+              {{ t('deleteMailTip') }}
+            </n-popconfirm>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile Mail List Card -->
+      <div class="mobile-list-card app-surface-card">
+        <div v-if="data.length === 0" class="empty-list-state">
+          <div class="empty-icon-circle">
+            <n-icon :component="InboxOutlined" :size="28" />
+          </div>
+          <p class="empty-title">{{ t('emptyInbox') }}</p>
+        </div>
+
+        <div v-else class="mail-list">
+          <div
+            v-for="row in data"
+            :key="row.id"
+            class="mail-row mobile-mail-row"
+            :class="{ 'is-unread': enableMailReadStatus && row.is_unread === 1 }"
+            @click="() => clickRow(row)"
+          >
+            <n-checkbox
+              v-if="multiActionMode"
+              v-model:checked="row.checked"
+              class="mail-row-checkbox"
+              @click.stop
+            />
+            <MailSummary
+              :mail="row"
+              :showEMailTo="showEMailTo"
+              :enableMailReadStatus="enableMailReadStatus"
+              :previewLineClamp="mailListPreviewLineClampValue || 1"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Full-Screen Native-Feel Slide-Over Mail Reader -->
+      <n-drawer
+        v-model:show="mobileReaderVisible"
+        width="100%"
+        placement="right"
+        :trap-focus="false"
+        :block-scroll="true"
+        class="mobile-reader-drawer"
+      >
+        <div v-if="curMail" class="mobile-reader-shell">
+          <div class="mobile-reader-topbar">
+            <button type="button" class="mobile-back-btn" @click="curMail = null">
+              <n-icon :component="ArrowBackIosNewFilled" :size="17" />
+              <span>{{ t('backToList') }}</span>
+            </button>
+            <div class="mobile-reader-pager">
+              <button type="button" class="pager-icon-btn" :disabled="!canGoPrevMail" @click="prevMail" :aria-label="t('prevMail')">
+                <n-icon :component="ArrowBackIosNewFilled" :size="16" />
+              </button>
+              <button type="button" class="pager-icon-btn" :disabled="!canGoNextMail" @click="nextMail" :aria-label="t('nextMail')">
+                <n-icon :component="ArrowForwardIosFilled" :size="16" />
+              </button>
+            </div>
+          </div>
+
+          <div class="mobile-reader-scroll">
+            <h1 class="mobile-reader-subject">{{ curMail.subject || '—' }}</h1>
+            <MailContentRenderer
+              :mail="curMail"
+              :showEMailTo="showEMailTo"
+              :enableUserDeleteEmail="enableUserDeleteEmail"
+              :showReply="showReply"
+              :showSaveS3="showSaveS3"
+              :enableMailReadStatus="enableMailReadStatus"
+              :onUpdateMailReadStatus="toggleCurrentMailUnread"
+              :onDelete="deleteMail"
+              :onReply="replyMail"
+              :onForward="forwardMail"
+              :onSaveToS3="saveToS3Proxy"
+            />
+          </div>
+        </div>
       </n-drawer>
     </div>
+
+    <!-- Batch Download Modal -->
     <n-modal v-model:show="showMultiActionDownload" preset="dialog" :title="t('downloadMail')">
-      <n-tag type="info">
-        {{ multiActionDownloadZip.filename }}
-      </n-tag>
-      <n-button tag="a" target="_blank" tertiary type="info" size="small" :download="multiActionDownloadZip.filename"
-        :href="multiActionDownloadZip.url">
-        <n-icon :component="CloudDownloadRound" />
-        {{ t('downloadMail') + " zip" }}
-      </n-button>
+      <n-space vertical>
+        <n-tag type="info" :bordered="false">
+          {{ multiActionDownloadZip.filename }}
+        </n-tag>
+        <n-button tag="a" target="_blank" type="primary" secondary block :download="multiActionDownloadZip.filename"
+          :href="multiActionDownloadZip.url">
+          <template #icon><n-icon :component="CloudDownloadRound" /></template>
+          {{ t('downloadMail') + " zip" }}
+        </n-button>
+      </n-space>
     </n-modal>
+
+    <!-- Batch Delete Progress Modal -->
     <n-modal v-model:show="showMultiActionDelete" preset="dialog" :title="t('delete') + t('success')"
       negative-text="OK">
       <n-space justify="center">
@@ -579,81 +806,385 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.left {
+.mailbox-root {
   text-align: left;
+  min-width: 0;
 }
 
-.center {
-  text-align: center;
-}
-
-.overlay {
+/* Desktop Workspace */
+.mailbox-desktop {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.mailbox-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.desktop-search-input {
+  width: 210px;
+}
+
+.auto-refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.16s var(--app-ease);
+  white-space: nowrap;
+}
+
+.auto-refresh-pill:hover {
+  border-color: var(--app-border-strong);
+  color: var(--app-text);
+}
+
+.auto-refresh-pill.is-on {
+  background: var(--app-accent-soft);
+  border-color: var(--app-accent-border);
+  color: var(--app-accent);
+}
+
+.spin-slow {
+  animation: spin-slow 4s linear infinite;
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.selected-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mailbox-split {
+  height: min(74vh, 780px);
+  min-height: 520px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.mailbox-split :deep(.n-split-pane-1),
+.mailbox-split :deep(.n-split-pane-2) {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mail-list-pane {
   height: 100%;
-  z-index: 1000;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--app-surface);
 }
 
-.mail-list-compact :deep(.n-list-item.overlay-dark-backgroud) {
-  background-color: rgba(255, 255, 255, 0.1);
+.mail-list-pane.full-height {
+  min-height: 460px;
+  max-height: 75vh;
 }
 
-.mail-list-compact :deep(.n-list-item.overlay-light-backgroud) {
-  background-color: rgba(0, 0, 0, 0.1);
+.mail-list {
+  display: flex;
+  flex-direction: column;
 }
 
-.mail-item {
+.mail-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 15px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--app-border);
+  transition: background-color 0.14s var(--app-ease);
+}
+
+.mail-row:last-child {
+  border-bottom: 0;
+}
+
+.mail-row:hover {
+  background: var(--app-surface-subtle);
+}
+
+.mail-row.is-selected {
+  background: var(--app-accent-soft);
+}
+
+.mail-row.is-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--app-accent);
+}
+
+.mail-row-checkbox {
+  margin-top: 8px;
+  flex-shrink: 0;
+}
+
+.mail-reader-pane {
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--app-surface);
+  min-width: 0;
 }
 
-:deep(.mail-item .n-card-header__main) {
+.reader-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--app-border);
+  flex-shrink: 0;
+}
+
+.reader-nav-left,
+.reader-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reader-scroll-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 28px;
+  min-width: 0;
+}
+
+.reader-subject {
+  margin: 0 0 14px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  color: var(--app-text);
   overflow-wrap: anywhere;
 }
 
-.mail-mobile-reader {
-  min-width: 0;
+.empty-list-state,
+.reader-empty-state {
+  height: 100%;
+  min-height: 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 20px;
+  text-align: center;
+  color: var(--app-text-muted);
 }
 
-.mail-list-scroll {
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 60vh;
-  max-height: 100vh;
+.empty-icon-circle {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
 }
 
-.mail-list-compact :deep(.n-list-item) {
-  height: auto;
-  padding: 12px 14px;
+.empty-icon-circle.large {
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
 }
 
-.mail-list-compact :deep(.n-list-item:not(.overlay):hover) {
-  background-color: v-bind("isDark ? 'rgba(255, 255, 255, 0.04)' : themeVars.hoverColor");
-}
-
-.mail-list-scroll :deep(.n-list-item__main) {
-  min-width: 0;
-}
-
-pre {
-  white-space: pre-wrap;
-  word-wrap: break-word;
+.empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--app-text-secondary);
 }
 
 .split-handle {
   height: 100%;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--app-border);
+  transition: background-color 0.16s;
+}
+
+.split-handle:hover {
+  background: var(--app-accent-border);
 }
 
 .split-handle__grip {
-  width: 4px;
-  height: 32px;
+  width: 2px;
+  height: 28px;
   border-radius: 2px;
-  background-color: var(--n-resize-trigger-color);
-  transition: background-color 0.2s;
+  background: var(--app-text-muted);
+  opacity: 0.35;
 }
 
-.split-handle:hover .split-handle__grip {
-  background-color: var(--n-resize-trigger-color-hover);
+/* Mobile Workspace */
+.mailbox-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mobile-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-toolbar-row,
+.mobile-multi-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mobile-toolbar-left,
+.mobile-toolbar-right,
+.mobile-multi-left,
+.mobile-multi-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mobile-list-card {
+  overflow: hidden;
+  min-height: 260px;
+}
+
+.mobile-mail-row {
+  padding: 14px 14px;
+}
+
+.mobile-mail-row:active {
+  background: var(--app-surface-subtle);
+}
+
+/* Full-screen Mobile Reader */
+.mobile-reader-shell {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+
+.mobile-reader-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 12px;
+  padding-top: env(safe-area-inset-top, 0px);
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-glass-strong);
+  backdrop-filter: blur(16px);
+  flex-shrink: 0;
+}
+
+.mobile-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--app-accent);
+  font-size: 15px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.mobile-reader-pager {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pager-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.pager-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.mobile-reader-scroll {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+  min-width: 0;
+}
+
+.mobile-reader-subject {
+  margin: 0 0 14px;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--app-text);
+  overflow-wrap: anywhere;
 }
 </style>

@@ -1,0 +1,230 @@
+/* Apple Mail / Notion Minimalist Design System */
+
+:root {
+  --app-bg: #F6F7F9;
+  --app-surface: #FFFFFF;
+  --app-surface-subtle: #F1F3F6;
+  --app-surface-hover: #ECEFF4;
+  --app-glass: rgba(255, 255, 255, 0.82);
+  --app-glass-strong: rgba(255, 255, 255, 0.92);
+  --app-border: rgba(15, 23, 42, 0.08);
+  --app-border-strong: rgba(15, 23, 42, 0.13);
+  --app-text: #111827;
+  --app-text-secondary: #4B5563;
+  --app-text-muted: #8E95A2;
+  --app-accent: #2563EB;
+  --app-accent-soft: rgba(37, 99, 235, 0.09);
+  --app-accent-border: rgba(37, 99, 235, 0.22);
+  --app-success: #16A34A;
+  --app-success-soft: rgba(22, 163, 74, 0.1);
+  --app-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --app-shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.05), 0 4px 14px rgba(15, 23, 42, 0.04);
+  --app-shadow-md: 0 4px 20px rgba(15, 23, 42, 0.07), 0 1px 3px rgba(15, 23, 42, 0.04);
+  --app-radius-sm: 10px;
+  --app-radius-md: 14px;
+  --app-radius-lg: 18px;
+  --app-max-width: 1600px;
+  --app-header-height: 58px;
+  --app-mobile-nav-height: 62px;
+  --app-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+html.dark,
+html[data-theme="dark"] {
+  --app-bg: #0D0F12;
+  --app-surface: #15181E;
+  --app-surface-subtle: #1C2029;
+  --app-surface-hover: #232834;
+  --app-glass: rgba(13, 15, 18, 0.8);
+  --app-glass-strong: rgba(21, 24, 30, 0.94);
+  --app-border: rgba(255, 255, 255, 0.08);
+  --app-border-strong: rgba(255, 255, 255, 0.14);
+  --app-text: #F3F4F6;
+  --app-text-secondary: #A1A8B3;
+  --app-text-muted: #6B7280;
+  --app-accent: #60A5FA;
+  --app-accent-soft: rgba(96, 165, 250, 0.14);
+  --app-accent-border: rgba(96, 165, 250, 0.28);
+  --app-success: #34D399;
+  --app-success-soft: rgba(52, 211, 153, 0.14);
+  --app-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --app-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --app-shadow-md: 0 8px 28px rgba(0, 0, 0, 0.38);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--app-bg);
+  color: var(--app-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow-x: clip;
+}
+
+/* Subtle custom scrollbars */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.32);
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.52);
+  }
+}
+
+/* Surface utility cards */
+.app-surface-card {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  box-shadow: var(--app-shadow-sm);
+}
+
+/* Global Naive UI visual refinements across all subpages */
+.n-card {
+  border: 1px solid var(--app-border) !important;
+  box-shadow: var(--app-shadow-xs);
+  transition: border-color 0.18s var(--app-ease), box-shadow 0.18s var(--app-ease);
+}
+
+.n-modal.n-card,
+.n-dialog {
+  max-width: calc(100vw - 24px) !important;
+  box-shadow: var(--app-shadow-md) !important;
+}
+
+.n-data-table {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+}
+
+.n-tabs .n-tabs-nav {
+  margin-bottom: 6px;
+}
+
+.n-tabs-pane-wrapper {
+  overflow: hidden;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.n-tab-pane {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Unified Page & Subview Width System */
+.tab-content-area .center,
+.tab-content-area .composer-page {
+  width: 100% !important;
+  max-width: 100% !important;
+  padding-top: 0 !important;
+}
+
+.tab-content-area .center > .n-card,
+.tab-content-area .composer-card {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* Flush unified workspace inside Admin & User panels (no card-inside-card or random widths) */
+.admin-workspace .center,
+.user-panel .center {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  text-align: left !important;
+}
+
+.admin-workspace .composer-page,
+.user-panel .composer-page {
+  width: 100% !important;
+  padding: 0 !important;
+}
+
+.admin-workspace .center > .n-card,
+.admin-workspace .composer-card,
+.admin-workspace .admin-account-card,
+.user-panel .center > .n-card,
+.user-panel .composer-card {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.admin-workspace .center > .n-card > .n-card__content,
+.admin-workspace .center > .n-card > .n-card-header,
+.admin-workspace .composer-card > .n-card__content,
+.admin-workspace .composer-card > .n-card-header,
+.admin-workspace .admin-account-card > .n-card__content,
+.user-panel .center > .n-card > .n-card__content,
+.user-panel .center > .n-card > .n-card-header,
+.user-panel .composer-card > .n-card__content,
+.user-panel .composer-card > .n-card-header {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* Smooth horizontal touch scroll for wide legacy tables */
+[style*="overflow: auto"],
+.address-table-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Mobile-specific global polish */
+@media (max-width: 767px) {
+  :root {
+    --app-header-height: 52px;
+  }
+
+  .n-card > .n-card__content,
+  .n-card > .n-card-header {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+  }
+
+  .n-dialog {
+    padding: 18px 16px !important;
+  }
+
+  .n-pagination {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+}
+
+/* Prevent iOS Safari zoom on form inputs */
+@media (hover: none) and (pointer: coarse) and (max-width: 1024px) {
+  :where(input, textarea, select, [contenteditable="true"]) {
+    font-size: 16px !important;
+  }
+
+  :where(.n-input, .n-input-number, .n-base-selection, .n-input-group-label) {
+    --n-font-size: 16px !important;
+  }
+}

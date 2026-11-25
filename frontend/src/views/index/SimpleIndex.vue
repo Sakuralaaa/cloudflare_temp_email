@@ -5,6 +5,7 @@ import { useMessage } from 'naive-ui'
 import {
     ExitToAppFilled,
     ContentCopyFilled,
+    CheckRound,
     RefreshFilled,
     ArrowBackIosNewFilled,
     ArrowForwardIosFilled,
@@ -23,27 +24,29 @@ import AddressCredentialModal from '../../components/AddressCredentialModal.vue'
 const { jwt, settings, useSimpleIndex, showAddressCredential, openSettings, loading } = useGlobalState()
 const message = useMessage()
 
-// 邮件数据
 const currentPage = ref(1)
 const totalCount = ref(0)
 const currentMail = ref(null)
 const showAccountSettingsCard = ref(false)
 const currentAutoRefreshInterval = ref(60)
 const timer = ref(null)
+const copied = ref(false)
+let copiedTimer = null
 
 const { t } = useScopedI18n('views.index.SimpleIndex')
 
-// 复制地址
 const copyAddress = async () => {
     try {
         await navigator.clipboard.writeText(settings.value.address)
+        copied.value = true
+        clearTimeout(copiedTimer)
+        copiedTimer = setTimeout(() => { copied.value = false }, 1800)
         message.success(t('addressCopied'))
     } catch (error) {
         message.error('复制失败')
     }
 }
 
-// 获取邮件数据
 const fetchMails = async () => {
     if (!settings.value.address) return
     try {
@@ -76,7 +79,6 @@ const toggleCurrentMailUnread = async () => {
     }
 }
 
-// 删除邮件
 const deleteMail = async () => {
     if (!currentMail.value) return;
     try {
@@ -90,7 +92,6 @@ const deleteMail = async () => {
     }
 }
 
-// 刷新邮件
 const refreshMails = async () => {
     if (loading.value) return
     currentPage.value = 1
@@ -100,7 +101,6 @@ const refreshMails = async () => {
     message.success(t('refreshSuccess'))
 }
 
-// 分页控制
 const currentPageDisplay = computed(() => currentPage.value)
 const totalPages = computed(() => Math.max(1, totalCount.value))
 const canGoPrev = computed(() => currentPage.value > 1)
@@ -119,7 +119,6 @@ const nextPage = async () => {
     }
 }
 
-// 监听页面变化
 watch(currentPage, () => {
     fetchMails()
 })
@@ -128,7 +127,6 @@ onMounted(async () => {
     await api.getSettings()
     await fetchMails()
 
-    // 启动自动刷新
     timer.value = setInterval(async () => {
         if (!isFirstPage.value) {
             currentAutoRefreshInterval.value = 60
@@ -147,106 +145,74 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="center">
+    <div class="simple-shell">
         <div v-if="!settings.address">
-            <n-card :bordered="false" embedded>
+            <n-card :bordered="false" class="simple-card">
                 <Login />
             </n-card>
         </div>
 
-        <div v-else>
-            <n-card :bordered="false" embedded>
-                <div style="text-align: center; margin-bottom: 16px; font-size: 18px;">
-                    <AddressSelect :showCopy="false" size="small" />
+        <div v-else class="simple-stack">
+            <n-card :bordered="false" class="simple-card">
+                <div class="simple-address-wrap">
+                    <AddressSelect :showCopy="false" size="medium" />
                 </div>
-                <n-flex justify="center">
-                    <n-button @click="refreshMails" :loading="loading" type="primary" tertiary size="small">
-                        <template #icon>
-                            <n-icon>
-                                <RefreshFilled />
-                            </n-icon>
-                        </template>
+                <div class="simple-actions">
+                    <n-button @click="refreshMails" :loading="loading" type="primary" secondary size="small">
+                        <template #icon><n-icon :component="RefreshFilled" /></template>
                         {{ t('refreshMails') }}
                     </n-button>
-                    <n-button @click="copyAddress" tertiary size="small">
-                        <template #icon>
-                            <n-icon>
-                                <ContentCopyFilled />
-                            </n-icon>
-                        </template>
+                    <n-button @click="copyAddress" :type="copied ? 'success' : 'default'" secondary size="small">
+                        <template #icon><n-icon :component="copied ? CheckRound : ContentCopyFilled" /></template>
                         {{ t('copyAddress') }}
                     </n-button>
-                    <n-button @click="useSimpleIndex = false" tertiary size="small">
-                        <template #icon>
-                            <n-icon>
-                                <ExitToAppFilled />
-                            </n-icon>
-                        </template>
-                        {{ t('exitSimpleIndex') }}
-                    </n-button>
-                    <n-button @click="showAccountSettingsCard = true" tertiary size="small">
-                        <template #icon>
-                            <n-icon>
-                                <SettingsFilled />
-                            </n-icon>
-                        </template>
+                    <n-button @click="showAccountSettingsCard = !showAccountSettingsCard" quaternary size="small">
+                        <template #icon><n-icon :component="SettingsFilled" /></template>
                         {{ t('mailboxSettings') }}
                     </n-button>
-                </n-flex>
-                <div v-if="isFirstPage" style="text-align: center; margin-top: 12px;">
-                    <n-text depth="3" size="12">
-                        {{ t('refreshAfter', { msg: Math.max(0, currentAutoRefreshInterval) }) }}
-                    </n-text>
+                    <n-button @click="useSimpleIndex = false" quaternary size="small">
+                        <template #icon><n-icon :component="ExitToAppFilled" /></template>
+                        {{ t('exitSimpleIndex') }}
+                    </n-button>
+                </div>
+                <div v-if="isFirstPage" class="simple-refresh-hint">
+                    {{ t('refreshAfter', { msg: Math.max(0, currentAutoRefreshInterval) }) }}
                 </div>
             </n-card>
 
-            <!-- 账户设置卡片 -->
-            <n-card v-if="showAccountSettingsCard" :bordered="false" embedded closable
-                @close="showAccountSettingsCard = false" :title="t('mailboxSettings')">
+            <n-card v-if="showAccountSettingsCard" :bordered="false" closable
+                @close="showAccountSettingsCard = false" :title="t('mailboxSettings')" class="simple-card">
                 <AccountSettings />
             </n-card>
 
-            <n-card v-else :bordered="false" embedded style="text-align: left;">
-
-                <div v-if="totalCount > 1">
-                    <n-flex justify="space-between">
-                        <n-button @click="prevPage" :disabled="!canGoPrev" text size="small">
-                            <template #icon>
-                                <n-icon>
-                                    <ArrowBackIosNewFilled />
-                                </n-icon>
-                            </template>
-                            {{ t('prevPage') }}
-                        </n-button>
-                        <n-text size="small">
-                            {{ t('mailCount', { current: currentPageDisplay, total: totalCount }) }}
-                        </n-text>
-                        <n-button @click="nextPage" :disabled="!canGoNext" text size="small" icon-placement="right">
-                            <template #icon>
-                                <n-icon>
-                                    <ArrowForwardIosFilled />
-                                </n-icon>
-                            </template>
-                            {{ t('nextPage') }}
-                        </n-button>
-                    </n-flex>
+            <n-card v-else :bordered="false" class="simple-card mail-view-card">
+                <div v-if="totalCount > 1" class="simple-pager">
+                    <n-button @click="prevPage" :disabled="!canGoPrev" quaternary size="small">
+                        <template #icon><n-icon :component="ArrowBackIosNewFilled" /></template>
+                        {{ t('prevPage') }}
+                    </n-button>
+                    <n-text depth="3" class="pager-count">
+                        {{ t('mailCount', { current: currentPageDisplay, total: totalCount }) }}
+                    </n-text>
+                    <n-button @click="nextPage" :disabled="!canGoNext" quaternary size="small" icon-placement="right">
+                        <template #icon><n-icon :component="ArrowForwardIosFilled" /></template>
+                        {{ t('nextPage') }}
+                    </n-button>
                 </div>
 
                 <div v-if="!currentMail" class="no-mail">
                     <n-empty :description="t('noMails')" />
                 </div>
                 <div v-else>
-                    <h3 v-if="currentMail.subject"
+                    <h2 v-if="currentMail.subject" class="simple-mail-title"
                         :class="{ 'mail-title-unread': openSettings.enableMailReadStatus && currentMail.is_unread === 1 }">
                         {{ currentMail.subject }}
-                    </h3>
-                    <div style="margin-top: 16px;">
-                        <MailContentRenderer :mail="currentMail" :showEMailTo="false" :showReply="false"
-                            :enableUserDeleteEmail="openSettings.enableUserDeleteEmail" :showSaveS3="false"
-                            :enableMailReadStatus="openSettings.enableMailReadStatus"
-                            :onUpdateMailReadStatus="toggleCurrentMailUnread"
-                            :onDelete="deleteMail" />
-                    </div>
+                    </h2>
+                    <MailContentRenderer :mail="currentMail" :showEMailTo="false" :showReply="false"
+                        :enableUserDeleteEmail="openSettings.enableUserDeleteEmail" :showSaveS3="false"
+                        :enableMailReadStatus="openSettings.enableMailReadStatus"
+                        :onUpdateMailReadStatus="toggleCurrentMailUnread"
+                        :onDelete="deleteMail" />
                 </div>
             </n-card>
         </div>
@@ -255,27 +221,73 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.center {
-    max-width: 800px;
+.simple-shell {
+    max-width: 760px;
     margin: 0 auto;
+    text-align: left;
 }
 
-.n-card {
-    margin-top: 20px;
+.simple-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.simple-card {
     width: 100%;
 }
 
-.mail-title-unread {
+.simple-address-wrap {
+    margin-bottom: 12px;
+}
+
+.simple-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+}
+
+.simple-refresh-hint {
+    text-align: center;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--app-text-muted);
+}
+
+.simple-pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    margin-bottom: 14px;
+    border-bottom: 1px solid var(--app-border);
+}
+
+.pager-count {
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.no-mail {
+    padding: 36px 0;
+}
+
+.simple-mail-title {
+    margin: 0 0 14px;
+    font-size: 19px;
     font-weight: 700;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
 }
 
 .mail-title-unread::before {
     display: inline-block;
-    width: 7px;
-    height: 7px;
+    width: 8px;
+    height: 8px;
     margin-right: 8px;
     border-radius: 50%;
-    background: #2080f0;
+    background: var(--app-accent);
     content: '';
     vertical-align: middle;
 }

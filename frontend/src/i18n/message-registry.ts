@@ -353,6 +353,10 @@ export const MESSAGE_REGISTRY = {
     "linkedMailboxes": {
       "en": "Linked Mailboxes",
       "zh": "已绑定邮箱"
+    },
+    "adminAddresses": {
+      "en": "All Admin Mailboxes (type to search)",
+      "zh": "管理员全部邮箱（输入关键词搜索）"
     }
   },
   "components.AddressCredentialModal": {
@@ -2963,6 +2967,54 @@ export const MESSAGE_REGISTRY = {
     }
   },
   "views.admin.Mails": {
+    "priorityDomains": {
+      "en": "★ Priority recipient domains",
+      "zh": "★ 重点收件域名"
+    },
+    "choosePriorityDomains": {
+      "en": "Select priority domains (searchable, multiple)",
+      "zh": "选择重点域名，可多选并搜索"
+    },
+    "mailView": {
+      "en": "Inbox view",
+      "zh": "收件视图"
+    },
+    "allMail": {
+      "en": "All mail",
+      "zh": "全部邮件"
+    },
+    "priorityMail": {
+      "en": "Priority mail",
+      "zh": "重点邮件"
+    },
+    "otherMail": {
+      "en": "Other mail",
+      "zh": "其他邮件"
+    },
+    "priorityHelp": {
+      "en": "Admin display only: receiving, mailbox APIs and stored mail are unchanged. Domains match exactly; select subdomains separately. Preferences are saved in this browser.",
+      "zh": "仅筛选后台显示，不影响收件、API 取件或历史数据。按完整收件域名匹配，子域名需单独选择；重点域名与视图保存在当前浏览器。"
+    },
+    "noPriorityDomains": {
+      "en": "Choose priority domains above. The priority list is empty until you select a domain.",
+      "zh": "请先在上方选择重点域名；未选择时重点列表为空。"
+    },
+    "priorityMailboxes": {
+      "en": "★ Priority mailboxes",
+      "zh": "★ 重点邮箱"
+    },
+    "pinAddress": {
+      "en": "Star",
+      "zh": "收藏邮箱"
+    },
+    "unpinAddress": {
+      "en": "Unstar",
+      "zh": "取消收藏"
+    },
+    "clearFilter": {
+      "en": "Clear",
+      "zh": "重置"
+    },
     "addressQueryTip": {
       "en": "Leave blank to query all addresses",
       "zh": "留空查询所有地址"

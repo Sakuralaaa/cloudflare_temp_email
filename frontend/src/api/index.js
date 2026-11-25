@@ -64,7 +64,7 @@ const apiFetch = async (path, options = {}) => {
             headers,
         });
         const response = await interceptResponse(path, initialResponse);
-        if (ErrorCode.isAdminAuthError(response)) {
+        if (!options.silentAdminAuth && ErrorCode.isAdminAuthError(response)) {
             showAdminAuth.value = true;
         }
         if (ErrorCode.isSiteAuthError(response)) {

@@ -1,23 +1,47 @@
 <script setup>
 import { ref, h, onMounted, watch, computed } from 'vue';
-import { NBadge, useMessage } from 'naive-ui'
+import { useLocalStorage } from '@vueuse/core';
+import { NBadge, useMessage, NButton, NDropdown } from 'naive-ui'
 import { useScopedI18n } from '@/i18n/app'
+import useClipboard from 'vue-clipboard3'
 
 import { useGlobalState } from '../../store'
+import { useIsMobile } from '../../utils/composables'
 import { api } from '../../api'
 import { hashPassword, utcToLocalDate } from '../../utils'
-import { NButton, NMenu } from 'naive-ui';
-import { MenuFilled } from '@vicons/material'
+import {
+    SearchRound, ContentCopyOutlined, KeyOutlined,
+    MailOutlineRound, MoreHorizRound
+} from '@vicons/material'
 import AddressCredentialModal from '../../components/AddressCredentialModal.vue'
 
+const props = defineProps({
+    onViewMails: {
+        type: Function,
+        default: null
+    },
+    onViewSendBox: {
+        type: Function,
+        default: null
+    },
+    onEnterMailbox: {
+        type: Function,
+        default: null
+    }
+})
+
 const {
-    loading, adminTab, openSettings,
+    loading, adminTab, openSettings, jwt,
     adminMailTabAddress, adminSendBoxTabAddress,
     useUTCDate
 } = useGlobalState()
+const isMobile = useIsMobile()
 const message = useMessage()
+const { toClipboard } = useClipboard()
+const localAddressCache = useLocalStorage('LocalAddressCache', [])
 
 const { t } = useScopedI18n('views.admin.Account')
+const { t: localT } = useScopedI18n('views.index.LocalAddress')
 
 const showEmailCredential = ref(false)
 const curEmailCredential = ref("")
@@ -29,7 +53,6 @@ const showResetPassword = ref(false);
 const curResetPasswordAddressId = ref(0);
 const newPassword = ref('');
 
-// Multi-action mode state
 const checkedRowKeys = ref([]);
 const showMultiActionModal = ref(false);
 const multiActionProgress = ref({ percentage: 0, tip: '0/0' });
@@ -49,6 +72,67 @@ const pageSize = ref(20)
 const showDeleteAccount = ref(false)
 const showClearInbox = ref(false)
 const showClearSentItems = ref(false)
+
+const copyText = async (val) => {
+    try {
+        await toClipboard(val)
+        message.success(t("success"))
+    } catch (e) {
+        message.error(e.message || "error")
+    }
+}
+
+const openMailsForRow = (row) => {
+    adminMailTabAddress.value = row.name
+    if (props.onViewMails) {
+        props.onViewMails(row.name)
+    } else {
+        adminTab.value = 'mails'
+    }
+}
+
+const openSendBoxForRow = (row) => {
+    adminSendBoxTabAddress.value = row.name
+    if (props.onViewSendBox) {
+        props.onViewSendBox(row.name)
+    } else {
+        adminTab.value = 'sendBox'
+    }
+}
+
+const enterMailboxForRow = async (row) => {
+    try {
+        loading.value = true
+        const resJwt = await api.adminShowAddressCredential(row.id)
+        if (!resJwt) {
+            message.error('jwt not found')
+            return
+        }
+        jwt.value = resJwt
+        if (!localAddressCache.value.includes(resJwt)) {
+            localAddressCache.value.push(resJwt)
+        }
+        if (props.onEnterMailbox) {
+            await props.onEnterMailbox(row)
+        } else {
+            location.reload()
+        }
+    } catch (error) {
+        message.error(error.message || 'error')
+    } finally {
+        loading.value = false
+    }
+}
+
+const toggleRowChecked = (id, checked) => {
+    if (checked) {
+        if (!checkedRowKeys.value.includes(id)) {
+            checkedRowKeys.value = [...checkedRowKeys.value, id]
+        }
+    } else {
+        checkedRowKeys.value = checkedRowKeys.value.filter(k => k !== id)
+    }
+}
 
 const showCredential = async (row) => {
     try {
@@ -124,7 +208,6 @@ const resetPassword = async () => {
     }
 }
 
-// Multi-action mode functions
 const multiActionSelectAll = () => {
     checkedRowKeys.value = data.value.map(item => item.id);
 }
@@ -133,7 +216,6 @@ const multiActionUnselectAll = () => {
     checkedRowKeys.value = [];
 }
 
-// 通用批量操作函数
 const executeBatchOperation = async ({
     shouldSkip = () => false,
     apiCall,
@@ -255,13 +337,57 @@ const handleSorterChange = (sorter) => {
     }
 }
 
+const getRowActionOptions = (row) => {
+    const opts = [
+        { label: t('viewMails'), key: 'mails' },
+        { label: t('showCredential'), key: 'credential' },
+    ]
+    if (row.send_count > 0) {
+        opts.push({ label: t('viewSendBox'), key: 'sendbox' })
+    }
+    if (row.mail_count > 0) {
+        opts.push({ label: t('clearInbox'), key: 'clearInbox' })
+    }
+    if (row.send_count > 0) {
+        opts.push({ label: t('clearSentItems'), key: 'clearSent' })
+    }
+    if (openSettings.value?.enableAddressPassword) {
+        opts.push({ label: t('resetPassword'), key: 'resetPwd' })
+    }
+    opts.push({ label: t('delete'), key: 'delete' })
+    return opts
+}
+
+const handleRowAction = (key, row) => {
+    if (key === 'enter') {
+        enterMailboxForRow(row)
+    } else if (key === 'credential') {
+        showCredential(row)
+    } else if (key === 'mails') {
+        openMailsForRow(row)
+    } else if (key === 'sendbox') {
+        openSendBoxForRow(row)
+    } else if (key === 'clearInbox') {
+        curClearInboxAddressId.value = row.id
+        showClearInbox.value = true
+    } else if (key === 'clearSent') {
+        curClearSentItemsAddressId.value = row.id
+        showClearSentItems.value = true
+    } else if (key === 'resetPwd') {
+        curResetPasswordAddressId.value = row.id
+        showResetPassword.value = true
+    } else if (key === 'delete') {
+        curDeleteAddressId.value = row.id
+        showDeleteAccount.value = true
+    }
+}
+
 const columns = computed(() => [
-    {
-        type: 'selection'
-    },
+    { type: 'selection' },
     {
         title: "ID",
         key: "id",
+        width: 76,
         sorter: true,
         sortOrder: sortBy.value === 'id' ? sortOrder.value : false
     },
@@ -269,7 +395,17 @@ const columns = computed(() => [
         title: t('emailAddress'),
         key: "name",
         sorter: true,
-        sortOrder: sortBy.value === 'name' ? sortOrder.value : false
+        sortOrder: sortBy.value === 'name' ? sortOrder.value : false,
+        render(row) {
+            return h('div', { style: 'display: flex; align-items: center; gap: 6px;' }, [
+                h('span', { style: 'font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;' }, row.name),
+                h(NButton, {
+                    text: true,
+                    size: 'tiny',
+                    onClick: () => copyText(row.name)
+                }, { default: () => '复制' })
+            ])
+        }
     },
     {
         title: t('created_at'),
@@ -325,19 +461,14 @@ const columns = computed(() => [
             return h(NButton,
                 {
                     text: true,
-                    onClick: () => {
-                        if (row.mail_count > 0) {
-                            adminMailTabAddress.value = row.name;
-                            adminTab.value = "mails";
-                        }
-                    }
+                    onClick: () => openMailsForRow(row)
                 },
                 {
                     icon: () => h(NBadge, {
                         value: row.mail_count,
                         'show-zero': true,
                         max: 99,
-                        type: "success"
+                        type: row.mail_count > 0 ? "info" : "default"
                     }),
                     default: () => row.mail_count > 0 ? t('viewMails') : ""
                 }
@@ -355,8 +486,7 @@ const columns = computed(() => [
                     text: true,
                     onClick: () => {
                         if (row.send_count > 0) {
-                            adminSendBoxTabAddress.value = row.name;
-                            adminTab.value = "sendBox";
+                            openSendBoxForRow(row);
                         }
                     }
                 },
@@ -365,7 +495,7 @@ const columns = computed(() => [
                         value: row.send_count,
                         'show-zero': true,
                         max: 99,
-                        type: "success"
+                        type: row.send_count > 0 ? "success" : "default"
                     }),
                     default: () => row.send_count > 0 ? t('viewSendBox') : ""
                 }
@@ -375,107 +505,15 @@ const columns = computed(() => [
     {
         title: t('actions'),
         key: 'actions',
+        width: 112,
         render(row) {
-            return h('div', [
-                h(NMenu, {
-                    mode: "horizontal",
-                    options: [
-                        {
-                            label: t('actions'),
-                            icon: () => h(MenuFilled),
-                            key: "action",
-                            children: [
-                                {
-                                    label: () => h(NButton,
-                                        {
-                                            text: true,
-                                            onClick: () => showCredential(row)
-                                        },
-                                        { default: () => t('showCredential') }
-                                    ),
-                                },
-                                {
-                                    label: () => h(NButton,
-                                        {
-                                            text: true,
-                                            onClick: () => {
-                                                adminMailTabAddress.value = row.name;
-                                                adminTab.value = "mails";
-                                            }
-                                        },
-                                        { default: () => t('viewMails') }
-                                    ),
-                                    show: row.mail_count > 0
-                                },
-                                {
-                                    label: () => h(NButton,
-                                        {
-                                            text: true,
-                                            onClick: () => {
-                                                adminSendBoxTabAddress.value = row.name;
-                                                adminTab.value = "sendBox";
-                                            }
-                                        },
-                                        { default: () => t('viewSendBox') }
-                                    ),
-                                    show: row.send_count > 0
-                                },
-                                {
-                                    label: () => h(NButton,
-                                        {
-                                            text: true,
-                                            onClick: () => {
-                                                curClearInboxAddressId.value = row.id;
-                                                showClearInbox.value = true;
-                                            }
-                                        },
-                                        { default: () => t('clearInbox') }
-                                    ),
-                                    show: row.mail_count > 0
-                                },
-                                {
-                                    label: () => h(NButton,
-                                        {
-                                            text: true,
-                                            onClick: () => {
-                                                curClearSentItemsAddressId.value = row.id;
-                                                showClearSentItems.value = true;
-                                            }
-                                        },
-                                        { default: () => t('clearSentItems') }
-                                    ),
-                                    show: row.send_count > 0
-                                },
-                                {
-                                    label: () => h(NButton,
-                                        {
-                                            text: true,
-                                            onClick: () => {
-                                                curResetPasswordAddressId.value = row.id;
-                                                showResetPassword.value = true;
-                                            }
-                                        },
-                                        { default: () => t('resetPassword') }
-                                    ),
-                                    show: openSettings.value?.enableAddressPassword
-                                },
-                                {
-                                    label: () => h(NButton,
-                                        {
-                                            text: true,
-                                            onClick: () => {
-                                                curDeleteAddressId.value = row.id;
-                                                showDeleteAccount.value = true;
-                                            }
-                                        },
-                                        { default: () => t('delete') }
-                                    )
-                                }
-                            ]
-                        }
-                    ]
-                })
-            ])
+            return h(NDropdown, {
+                options: getRowActionOptions(row),
+                trigger: 'click',
+                onSelect: (key) => handleRowAction(key, row)
+            }, {
+                default: () => h(NButton, { size: 'small', secondary: true }, { default: () => t('actions') })
+            })
         }
     }
 ])
@@ -490,29 +528,32 @@ onMounted(async () => {
 </script>
 
 <template>
-    <div style="margin-top: 10px;">
+    <div class="admin-account-page">
         <AddressCredentialModal v-model:show="showEmailCredential" :address="curEmailAddress"
             :jwt="curEmailCredential" />
+
         <n-modal v-model:show="showDeleteAccount" preset="dialog" :title="t('deleteMailbox')">
             <p>{{ t('deleteTip') }}</p>
             <template #action>
-                <n-button :loading="loading" @click="deleteEmail" size="small" tertiary type="error">
+                <n-button :loading="loading" @click="deleteEmail" size="small" secondary type="error">
                     {{ t('deleteMailbox') }}
                 </n-button>
             </template>
         </n-modal>
+
         <n-modal v-model:show="showClearInbox" preset="dialog" :title="t('clearInbox')">
             <p>{{ t('clearInboxTip') }}</p>
             <template #action>
-                <n-button :loading="loading" @click="clearInbox" size="small" tertiary type="error">
+                <n-button :loading="loading" @click="clearInbox" size="small" secondary type="error">
                     {{ t('clearInbox') }}
                 </n-button>
             </template>
         </n-modal>
+
         <n-modal v-model:show="showClearSentItems" preset="dialog" :title="t('clearSentItems')">
             <p>{{ t('clearSentItemsTip') }}</p>
             <template #action>
-                <n-button :loading="loading" @click="clearSentItems" size="small" tertiary type="error">
+                <n-button :loading="loading" @click="clearSentItems" size="small" secondary type="error">
                     {{ t('clearSentItems') }}
                 </n-button>
             </template>
@@ -520,86 +561,221 @@ onMounted(async () => {
 
         <n-modal v-model:show="showResetPassword" preset="dialog" :title="t('resetPassword')">
             <n-form-item :label="t('newPassword')">
-                <n-input v-model:value="newPassword" type="password" placeholder="" show-password-on="click"
+                <n-input v-model:value="newPassword" type="password" show-password-on="click"
                     @keyup.enter="resetPassword" />
             </n-form-item>
             <template #action>
-                <n-button :loading="loading" @click="resetPassword" size="small" tertiary type="info">
+                <n-button :loading="loading" @click="resetPassword" size="small" secondary type="primary">
                     {{ t('resetPassword') }}
                 </n-button>
             </template>
         </n-modal>
-        <n-input-group style="margin-bottom: 10px;">
-            <n-input v-model:value="addressQuery" clearable :placeholder="t('addressQueryTip')"
-                @keydown.enter="searchData" />
-            <n-button @click="searchData" type="primary" tertiary>
-                {{ t('query') }}
-            </n-button>
-        </n-input-group>
 
-        <n-space v-if="showMultiActionBar" style="margin-bottom: 10px;">
-            <n-button @click="multiActionSelectAll" tertiary>
-                {{ t('selectAll') }}
-            </n-button>
-            <n-button @click="multiActionUnselectAll" tertiary>
-                {{ t('unselectAll') }}
-            </n-button>
-            <n-popconfirm @positive-click="multiActionDeleteAccounts">
-                <template #trigger>
-                    <n-button tertiary type="error">{{ t('multiDelete') }}</n-button>
-                </template>
-                {{ t('multiDeleteTip') }}
-            </n-popconfirm>
-            <n-popconfirm @positive-click="multiActionClearInbox">
-                <template #trigger>
-                    <n-button tertiary type="warning">{{ t('multiClearInbox') }}</n-button>
-                </template>
-                {{ t('multiClearInboxTip') }}
-            </n-popconfirm>
-            <n-popconfirm @positive-click="multiActionClearSentItems">
-                <template #trigger>
-                    <n-button tertiary type="warning">{{ t('multiClearSentItems') }}</n-button>
-                </template>
-                {{ t('multiClearSentItemsTip') }}
-            </n-popconfirm>
-            <n-tag type="info">
-                {{ t('selectedItems') }}: {{ selectedCount }}
-            </n-tag>
-        </n-space>
-        <div style="overflow: auto;">
-            <div style="display: inline-block;">
-                <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count"
-                    :page-sizes="[20, 50, 100]" show-size-picker>
-                    <template #prefix="{ itemCount }">
-                        {{ t('itemCount') }}: {{ itemCount }}
+        <!-- Search Bar -->
+        <div class="search-row">
+            <n-input-group>
+                <n-input v-model:value="addressQuery" clearable :placeholder="t('addressQueryTip')"
+                    @keydown.enter="searchData">
+                    <template #prefix><n-icon :component="SearchRound" /></template>
+                </n-input>
+                <n-button @click="searchData" type="primary" secondary>
+                    {{ t('query') }}
+                </n-button>
+            </n-input-group>
+        </div>
+
+        <!-- Batch Action Bar -->
+        <div v-if="showMultiActionBar" class="batch-bar">
+            <n-space align="center" :size="6">
+                <n-tag type="info" :bordered="false" round>{{ t('selectedItems') }}: {{ selectedCount }}</n-tag>
+                <n-button @click="multiActionSelectAll" size="small" quaternary>{{ t('selectAll') }}</n-button>
+                <n-button @click="multiActionUnselectAll" size="small" quaternary>{{ t('unselectAll') }}</n-button>
+                <n-popconfirm @positive-click="multiActionClearInbox">
+                    <template #trigger>
+                        <n-button size="small" secondary type="warning">{{ t('multiClearInbox') }}</n-button>
                     </template>
-                </n-pagination>
+                    {{ t('multiClearInboxTip') }}
+                </n-popconfirm>
+                <n-popconfirm @positive-click="multiActionClearSentItems">
+                    <template #trigger>
+                        <n-button size="small" secondary type="warning">{{ t('multiClearSentItems') }}</n-button>
+                    </template>
+                    {{ t('multiClearSentItemsTip') }}
+                </n-popconfirm>
+                <n-popconfirm @positive-click="multiActionDeleteAccounts">
+                    <template #trigger>
+                        <n-button size="small" secondary type="error">{{ t('multiDelete') }}</n-button>
+                    </template>
+                    {{ t('multiDeleteTip') }}
+                </n-popconfirm>
+            </n-space>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pager-row">
+            <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count"
+                :page-sizes="[20, 50, 100]" :simple="isMobile" size="small" show-size-picker>
+                <template #prefix="{ itemCount }">
+                    {{ t('itemCount') }}: {{ itemCount }}
+                </template>
+            </n-pagination>
+        </div>
+
+        <!-- Mobile Card List -->
+        <div v-if="isMobile" class="mobile-account-list">
+            <div v-for="row in data" :key="row.id" class="mobile-account-card">
+                <div class="card-top-row">
+                    <n-checkbox
+                        :checked="checkedRowKeys.includes(row.id)"
+                        @update:checked="(val) => toggleRowChecked(row.id, val)"
+                    />
+                    <span class="account-email">{{ row.name }}</span>
+                    <n-button quaternary circle size="small" @click="copyText(row.name)">
+                        <template #icon><n-icon :component="ContentCopyOutlined" /></template>
+                    </n-button>
+                </div>
+
+                <div class="card-meta-row">
+                    <span class="meta-chip">#{{ row.id }}</span>
+                    <span class="meta-chip">{{ utcToLocalDate(row.created_at, useUTCDate) }}</span>
+                    <span v-if="row.source_meta" class="meta-chip">{{ row.source_meta }}</span>
+                </div>
+
+                <div class="card-footer-row">
+                    <div class="card-stats">
+                        <n-button
+                            size="tiny"
+                            secondary
+                            :type="row.mail_count > 0 ? 'primary' : 'default'"
+                            @click="openMailsForRow(row)"
+                        >
+                            <template #icon><n-icon :component="MailOutlineRound" /></template>
+                            {{ row.mail_count }} {{ t('viewMails') }}
+                        </n-button>
+                        <n-button size="tiny" secondary @click="showCredential(row)">
+                            <template #icon><n-icon :component="KeyOutlined" /></template>
+                            {{ t('showCredential') }}
+                        </n-button>
+                    </div>
+                    <n-dropdown
+                        :options="getRowActionOptions(row)"
+                        trigger="click"
+                        @select="(k) => handleRowAction(k, row)"
+                    >
+                        <n-button size="tiny" quaternary>
+                            <template #icon><n-icon :component="MoreHorizRound" /></template>
+                        </n-button>
+                    </n-dropdown>
+                </div>
             </div>
+        </div>
+
+        <!-- Desktop Data Table -->
+        <div v-else class="table-scroll">
             <n-data-table v-model:checked-row-keys="checkedRowKeys" :columns="columns" :data="data" :bordered="false"
-                :row-key="row => row.id" remote @update:sorter="handleSorterChange" embedded />
+                :row-key="row => row.id" remote @update:sorter="handleSorterChange" />
         </div>
 
         <!-- Multi-action progress modal -->
         <n-modal v-model:show="showMultiActionModal" preset="dialog" :title="multiActionTitle" negative-text="OK">
             <n-space justify="center">
                 <n-progress type="circle" status="info" :percentage="multiActionProgress.percentage">
-                    <span style="text-align: center">
-                        {{ multiActionProgress.tip }}
-                    </span>
+                    <span style="text-align: center">{{ multiActionProgress.tip }}</span>
                 </n-progress>
             </n-space>
         </n-modal>
-
     </div>
 </template>
 
 <style scoped>
-.n-pagination {
-    margin-top: 10px;
-    margin-bottom: 10px;
+.admin-account-page {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
-.n-data-table {
-    min-width: 1000px;
+.batch-bar {
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--app-surface-subtle);
+    border: 1px solid var(--app-border);
+}
+
+.pager-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.table-scroll {
+    overflow-x: auto;
+}
+
+.table-scroll :deep(.n-data-table) {
+    min-width: 960px;
+}
+
+.mobile-account-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mobile-account-card {
+    padding: 12px 13px;
+    border-radius: 13px;
+    background: var(--app-surface-subtle);
+    border: 1px solid var(--app-border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.card-top-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.account-email {
+    flex: 1;
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--app-text);
+    overflow-wrap: anywhere;
+}
+
+.card-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--app-text-muted);
+}
+
+.meta-chip {
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: var(--app-surface);
+    border: 1px solid var(--app-border);
+}
+
+.card-footer-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 4px;
+    border-top: 1px solid var(--app-border);
+}
+
+.card-stats {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
 }
 </style>

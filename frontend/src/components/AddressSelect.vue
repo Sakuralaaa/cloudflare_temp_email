@@ -1,10 +1,10 @@
 <script setup>
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useLocalStorage } from '@vueuse/core'
 import { useScopedI18n } from '@/i18n/app'
 import { NTag, useMessage } from 'naive-ui'
 import useClipboard from 'vue-clipboard3'
-import { Copy } from '@vicons/fa'
+import { ContentCopyOutlined, CheckRound } from '@vicons/material'
 
 import { useGlobalState } from '../store'
 import { api } from '../api'
@@ -17,98 +17,118 @@ const props = defineProps({
     },
     size: {
         type: String,
-        default: 'small',
+        default: 'medium',
     },
 })
 
 const message = useMessage()
 const { toClipboard } = useClipboard()
+const copied = ref(false)
+let copiedTimer = null
+let searchTimer = null
 
 const {
-    jwt, settings, userJwt, isTelegram, openSettings, telegramApp, showUserMailboxes
+    jwt, userJwt, settings, isTelegram, telegramApp,
+    showUserMailboxes, openSettings, showAdminPage
 } = useGlobalState()
 
 const { t } = useScopedI18n('components.AddressSelect')
 const { t: loginT } = useScopedI18n('views.common.Login')
 
+const localAddressCache = useLocalStorage("LocalAddressCache", [])
 const addressOptions = ref([])
-const showLoginMethods = computed(() => new Set(
-    addressOptions.value.flatMap(option => option.children || [option])
-        .map(option => option.loginMethod).filter(Boolean)
-).size > 1)
 const addressValue = ref(null)
 const addressLoading = ref(false)
-const localAddressCache = useLocalStorage("LocalAddressCache", [])
+const searchQuery = ref('')
 const optionValueMap = new Map()
 
-const formatAddressLabel = (address) => {
-    if (!address) return address;
-    const domain = address.split('@')[1]
-    const domainLabel = openSettings.value.domains.find(
-        d => d.value === domain
-    )?.label;
-    if (!domainLabel) return address;
-    return address.replace('@' + domain, `@${domainLabel}`);
-}
+const showLoginMethodTag = computed(() => {
+    const methods = new Set()
+    const collect = (items) => {
+        for (const item of items) {
+            if (item.children) collect(item.children)
+            else if (item.loginMethod) methods.add(item.loginMethod)
+        }
+    }
+    collect(addressOptions.value)
+    return methods.size > 1
+})
 
 const renderLabel = (option) => {
-    if (!showLoginMethods.value || !option.loginMethod) return option.label;
-    return h('span', {
-        style: { display: 'inline-flex', alignItems: 'center', gap: '8px', maxWidth: '100%' },
-    }, [
-        h('span', {
-            style: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-        }, option.label),
-        h(NTag, {
-            size: 'small', bordered: false, style: { flexShrink: 0 },
-        }, () => loginT(option.loginMethod)),
-    ]);
+    if (option.type === 'group') return option.label
+    const badges = []
+    if (typeof option.mailCount === 'number' && option.mailCount > 0) {
+        badges.push(h(NTag, { size: 'tiny', type: 'info', bordered: false, round: true, style: 'flex-shrink: 0;' }, () => `${option.mailCount}`))
+    }
+    if (showLoginMethodTag.value && option.loginMethod) {
+        badges.push(h(NTag, { size: 'tiny', bordered: false, style: 'flex-shrink: 0;' }, () => loginT(option.loginMethod)))
+    }
+    if (badges.length === 0) return option.label
+    return h('div', { style: 'display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;' }, [
+        h('span', { style: 'overflow: hidden; text-overflow: ellipsis;' }, option.label),
+        h('div', { style: 'display: flex; align-items: center; gap: 4px; flex-shrink: 0;' }, badges)
+    ])
 }
 
 const getOptionValue = (key, scope, payload, address) => {
-    if (optionValueMap.has(key)) {
-        const cached = optionValueMap.get(key)
-        cached.scope = scope
-        cached.payload = payload
-        cached.address = address
-        return cached
+    const existing = optionValueMap.get(key)
+    if (existing) {
+        existing.scope = scope
+        existing.payload = payload
+        existing.address = address
+        return existing
     }
-    const value = { key, scope, payload, address }
-    optionValueMap.set(key, value)
-    return value
+    const created = { key, scope, payload, address }
+    optionValueMap.set(key, created)
+    return created
 }
 
-const buildLocalOptions = (excludeAddresses = new Set()) => {
-    if (typeof jwt.value === 'string' && jwt.value && !localAddressCache.value.includes(jwt.value)) {
+const formatAddressLabel = (address) => {
+    if (!address) return ''
+    return address
+}
+
+const matchesQuery = (text, q) => {
+    if (!q) return true
+    return String(text || '').toLowerCase().includes(q.toLowerCase())
+}
+
+const buildLocalOptions = (excludeAddresses = new Set(), query = '') => {
+    if (jwt.value && !localAddressCache.value.includes(jwt.value)) {
         localAddressCache.value.push(jwt.value)
     }
-    const children = localAddressCache.value
-        .map((curJwt) => {
-            const payload = decodeAddressToken(curJwt);
-            const address = payload?.address;
-            if (!address) return null;
-            if (excludeAddresses.has(address)) return null;
-            const loginMethod = payload.type === 'address_password_login' ? 'passwordLogin' : 'credentialLogin';
-            if (openSettings.value.addressPasswordLoginOnly && loginMethod !== 'passwordLogin') return null;
+    const byAddress = new Map()
+    for (const curJwt of localAddressCache.value) {
+        const payload = decodeAddressToken(curJwt);
+        const address = payload?.address;
+        if (!address || excludeAddresses.has(address)) continue;
+        const loginMethod = payload.type === 'address_password_login' ? 'passwordLogin' : 'credentialLogin';
+        if (openSettings.value.addressPasswordLoginOnly && loginMethod !== 'passwordLogin') continue;
+        const existing = byAddress.get(address)
+        if (!existing || curJwt === jwt.value || existing.curJwt !== jwt.value) {
+            byAddress.set(address, { curJwt, address, loginMethod })
+        }
+    }
+    return Array.from(byAddress.values())
+        .filter(({ address }) => matchesQuery(address, query))
+        .map(({ curJwt, address, loginMethod }) => {
             const label = formatAddressLabel(address);
             const key = `local:${curJwt}`;
             const option = { label, value: getOptionValue(key, 'local', curJwt, address), address, loginMethod };
-            if (curJwt === jwt.value) {
+            if (curJwt === jwt.value || (settings.value.address && address === settings.value.address)) {
                 addressValue.value = option.value;
             }
             return option;
-        })
-        .filter(Boolean);
-    return children;
+        });
 }
 
-const buildUserOptions = async () => {
+const buildUserOptions = async (query = '') => {
     const children = [];
     try {
-        const { results } = await api.fetch(`/user_api/bind_address?limit=100&offset=0`);
+        const { results } = await api.fetch(`/user_api/bind_address?limit=100&offset=0`, { showLoading: false });
         for (const row of results || []) {
             const address = row.address || row.name;
-            if (!address) continue;
+            if (!address || !matchesQuery(address, query)) continue;
             const label = formatAddressLabel(address);
             const key = `user:${row.id}`;
             const option = { label, value: getOptionValue(key, 'user', String(row.id), address), address };
@@ -119,6 +139,45 @@ const buildUserOptions = async () => {
         }
     } catch (error) {
         message.error(error.message || "error");
+    }
+    return children;
+}
+
+const buildAdminOptions = async (excludeAddresses = new Set(), query = '') => {
+    const children = [];
+    try {
+        const params = new URLSearchParams({
+            limit: '60',
+            offset: '0',
+            sort_by: 'updated_at',
+            sort_order: 'desc',
+        });
+        if (query.trim()) {
+            params.set('query', query.trim());
+        }
+        const { results } = await api.fetch(`/admin/address?${params}`, {
+            showLoading: false,
+            silentAdminAuth: true,
+        });
+        for (const row of results || []) {
+            const address = row.name || row.address;
+            if (!address || excludeAddresses.has(address)) continue;
+            const label = formatAddressLabel(address);
+            const key = `admin:${row.id}`;
+            const option = {
+                label,
+                value: getOptionValue(key, 'admin', String(row.id), address),
+                address,
+                mailCount: row.mail_count ?? 0,
+            };
+            if (!addressValue.value && settings.value.address && address === settings.value.address) {
+                addressValue.value = option.value;
+            }
+            children.push(option);
+        }
+    } catch (error) {
+        // Silently ignore if admin token expired on homepage
+        console.debug('Failed to load admin addresses in selector:', error);
     }
     return children;
 }
@@ -148,36 +207,55 @@ const buildTelegramOptions = async () => {
     return children;
 }
 
-const refreshAddressOptions = async () => {
+const refreshAddressOptions = async (query = searchQuery.value) => {
     addressLoading.value = true;
-    addressValue.value = null;
+    const prevValue = addressValue.value;
+    if (!query) addressValue.value = null;
     try {
         if (isTelegram.value) {
-            const telegramChildren = await buildTelegramOptions();
-            addressOptions.value = telegramChildren;
+            addressOptions.value = await buildTelegramOptions();
             return;
         }
         const groups = [];
+        const seen = new Set();
+
         if (showUserMailboxes.value) {
-            const userChildren = await buildUserOptions();
+            const userChildren = await buildUserOptions(query);
             if (userChildren.length > 0) {
                 groups.push({ type: 'group', label: t('linkedMailboxes'), children: userChildren });
-            }
-            const userAddressSet = new Set(userChildren.map((item) => item.address));
-            const localChildren = buildLocalOptions(userAddressSet);
-            if (localChildren.length > 0) {
-                groups.push({ type: 'group', label: t('localAddresses'), children: localChildren });
-            }
-        } else {
-            const localChildren = buildLocalOptions();
-            if (localChildren.length > 0) {
-                groups.push({ type: 'group', label: t('localAddresses'), children: localChildren });
+                userChildren.forEach((item) => seen.add(item.address));
             }
         }
+
+        const localChildren = buildLocalOptions(seen, query);
+        if (localChildren.length > 0) {
+            groups.push({ type: 'group', label: t('localAddresses'), children: localChildren });
+            localChildren.forEach((item) => seen.add(item.address));
+        }
+
+        if (showAdminPage.value) {
+            const adminChildren = await buildAdminOptions(seen, query);
+            if (adminChildren.length > 0) {
+                groups.push({ type: 'group', label: t('adminAddresses'), children: adminChildren });
+            }
+        }
+
         addressOptions.value = groups;
+        if (!addressValue.value && query && prevValue) {
+            addressValue.value = prevValue;
+        }
     } finally {
         addressLoading.value = false;
     }
+}
+
+const handleSearch = (query) => {
+    if (!showAdminPage.value || isTelegram.value) return;
+    searchQuery.value = query || '';
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+        refreshAddressOptions(searchQuery.value);
+    }, 220);
 }
 
 const onAddressChange = async (value) => {
@@ -199,12 +277,32 @@ const onAddressChange = async (value) => {
         } catch (error) {
             message.error(error.message || "error");
         }
+        return;
+    }
+    if (value.scope === 'admin') {
+        try {
+            const resJwt = await api.adminShowAddressCredential(value.payload);
+            if (!resJwt) {
+                message.error("jwt not found");
+                return;
+            }
+            jwt.value = resJwt;
+            if (!localAddressCache.value.includes(resJwt)) {
+                localAddressCache.value.push(resJwt);
+            }
+            location.reload();
+        } catch (error) {
+            message.error(error.message || "error");
+        }
     }
 }
 
 const copy = async () => {
     try {
         await toClipboard(settings.value.address)
+        copied.value = true
+        clearTimeout(copiedTimer)
+        copiedTimer = setTimeout(() => { copied.value = false }, 1800)
         message.success(t('copied'));
     } catch (e) {
         message.error(e.message || "error");
@@ -212,40 +310,109 @@ const copy = async () => {
 }
 
 onMounted(async () => {
-    await refreshAddressOptions();
+    await refreshAddressOptions('');
 });
 
-watch([userJwt, isTelegram, showUserMailboxes, jwt, localAddressCache, () => settings.value.address, () => openSettings.value.addressPasswordLoginOnly], async () => {
-    await refreshAddressOptions();
+onBeforeUnmount(() => {
+    clearTimeout(copiedTimer)
+    clearTimeout(searchTimer)
+})
+
+watch([userJwt, isTelegram, showUserMailboxes, showAdminPage, jwt, localAddressCache, () => settings.value.address, () => openSettings.value.addressPasswordLoginOnly], async () => {
+    await refreshAddressOptions(searchQuery.value);
 });
 </script>
 
 <template>
-    <n-flex class="address-row" align="center" justify="center" :wrap="true">
-        <n-select v-model:value="addressValue" :options="addressOptions" :size="size" :render-label="renderLabel" filterable
-            :loading="addressLoading" :placeholder="formatAddressLabel(settings.address) || t('selectMailbox')" @update:value="onAddressChange"
-            class="address-select" />
-        <slot name="actions" />
-        <n-button v-if="showCopy" class="address-copy" @click="copy" :size="size" tertiary type="primary">
-            <n-icon :component="Copy" /> {{ t('copy') }}
-        </n-button>
-    </n-flex>
+    <div class="address-row">
+        <div class="address-select-wrap">
+            <n-select
+                v-model:value="addressValue"
+                :options="addressOptions"
+                :size="size"
+                :render-label="renderLabel"
+                filterable
+                :remote="showAdminPage && !isTelegram"
+                :loading="addressLoading"
+                :placeholder="formatAddressLabel(settings.address) || t('selectMailbox')"
+                @search="handleSearch"
+                @update:value="onAddressChange"
+                class="address-select"
+            />
+        </div>
+        <div class="address-actions">
+            <n-button
+                v-if="showCopy"
+                class="address-copy"
+                @click="copy"
+                :size="size"
+                :type="copied ? 'success' : 'primary'"
+                :secondary="!copied"
+            >
+                <template #icon>
+                    <n-icon :component="copied ? CheckRound : ContentCopyOutlined" />
+                </template>
+                {{ t('copy') }}
+            </n-button>
+            <slot name="actions" />
+        </div>
+    </div>
 </template>
 
 <style scoped>
 .address-row {
     width: 100%;
-    gap: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.address-select-wrap {
+    flex: 1;
+    min-width: 0;
 }
 
 .address-select {
-    min-width: 220px;
-    max-width: 420px;
-    flex: 1 1 220px;
+    width: 100%;
+}
+
+.address-select :deep(.n-base-selection-label) {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13.5px;
+}
+
+.address-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
 }
 
 .address-copy {
     flex: 0 0 auto;
     white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .address-row {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .address-select-wrap {
+        flex: 1 1 100%;
+    }
+
+    .address-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .address-actions :deep(.n-button) {
+        width: 100%;
+    }
 }
 </style>

@@ -1,5 +1,5 @@
 <template>
-    <div class="mail-boundary">
+    <div class="mail-boundary" :class="{ 'is-dark': isDark }">
         <div v-if="useFallback" class="mail-document" v-html="htmlContent"></div>
         <div v-else ref="shadowHost" class="mail-document"></div>
     </div>
@@ -46,7 +46,20 @@ const renderShadowDom = () => {
 
         // Update content if Shadow DOM exists
         if (shadowRoot) {
-            shadowRoot.innerHTML = props.htmlContent;
+            const baseStyle = `<style>
+                :host {
+                    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+                    font-size: 14.5px;
+                    line-height: 1.65;
+                    color: #111827;
+                    word-break: break-word;
+                }
+                img { max-width: 100%; height: auto; }
+                table { max-width: 100%; }
+                pre { white-space: pre-wrap; word-wrap: break-word; font-family: inherit; margin: 0; }
+                a { color: #2563EB; }
+            </style>`;
+            shadowRoot.innerHTML = baseStyle + props.htmlContent;
         }
     } catch (error) {
         console.error('Failed to render Shadow DOM, falling back to v-html:', error);
@@ -84,9 +97,25 @@ watch(() => [props.htmlContent, props.isDark], () => {
 .mail-boundary {
     all: initial;
     display: block;
+    box-sizing: border-box;
     width: 100%;
-    color-scheme: normal;
-    color: CanvasText;
-    background-color: Canvas;
+    max-width: 100%;
+    min-width: 0;
+    color-scheme: light;
+    color: #111827;
+    background-color: #ffffff;
+    border-radius: 12px;
+    padding: 4px 2px;
+    overflow-x: auto;
+}
+
+.mail-document {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.mail-boundary.is-dark {
+    padding: 16px 18px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 </style>

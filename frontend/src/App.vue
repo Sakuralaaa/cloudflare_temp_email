@@ -13,6 +13,7 @@ import { api } from './api'
 import { getNaiveLocaleConfig } from './i18n/naive-locale'
 import { DEFAULT_LOCALE, isSupportedLocale } from './i18n/utils'
 import { APP_CONFIG } from './config'
+import { lightThemeOverrides, darkThemeOverrides } from './styles/naive-theme'
 
 const {
   isDark, loading, useSideMargin, telegramApp, isTelegram
@@ -21,15 +22,23 @@ const adClient = APP_CONFIG.GOOGLE_AD_CLIENT;
 const adSlot = APP_CONFIG.GOOGLE_AD_SLOT;
 const { locale } = useI18n({ useScope: 'global' });
 const theme = computed(() => isDark.value ? darkTheme : null)
+const themeOverrides = computed(() => isDark.value ? darkThemeOverrides : lightThemeOverrides)
 const localeConfig = computed(() => getNaiveLocaleConfig(isSupportedLocale(locale.value) ? locale.value : DEFAULT_LOCALE))
 const isMobile = useIsMobile()
 const showSideMargin = computed(() => !isMobile.value && useSideMargin.value);
 const showAd = computed(() => !isMobile.value && adClient && adSlot);
-const gridMaxCols = computed(() => showAd.value ? 8 : 12);
 
 watchEffect(() => {
   if (typeof document === 'undefined') return
   document.documentElement.lang = isSupportedLocale(locale.value) ? locale.value : DEFAULT_LOCALE
+  document.documentElement.dataset.theme = isDark.value ? 'dark' : 'light'
+  const themeColor = isDark.value ? '#0D0F12' : '#F6F7F9'
+  const metaTags = document.querySelectorAll('meta[name="theme-color"]')
+  metaTags.forEach((meta) => {
+    if (!meta.getAttribute('media')) {
+      meta.setAttribute('content', themeColor)
+    }
+  })
 })
 
 if (showAd.value) {
@@ -66,7 +75,6 @@ onMounted(async () => {
     (window.adsbygoogle = window.adsbygoogle || []).push({});
   }
 
-
   // check if telegram is enabled
   const enableTelegram = APP_CONFIG.IS_TELEGRAM;
   if (
@@ -88,80 +96,103 @@ onMounted(async () => {
 </script>
 
 <template>
-  <n-config-provider :locale="localeConfig.locale" :date-locale="localeConfig.dateLocale" :theme="theme">
+  <n-config-provider
+    :locale="localeConfig.locale"
+    :date-locale="localeConfig.dateLocale"
+    :theme="theme"
+    :theme-overrides="themeOverrides"
+  >
     <n-global-style />
-    <n-spin description="loading..." :show="loading">
-      <n-notification-provider container-style="margin-top: 60px;">
-        <n-message-provider container-style="margin-top: 20px;">
-          <n-grid x-gap="12" :cols="gridMaxCols">
-            <n-gi v-if="showSideMargin" span="1">
-              <div class="side" v-if="showAd">
+    <n-spin description="loading..." :show="loading" class="app-root-spin">
+      <n-notification-provider container-style="margin-top: 64px;">
+        <n-message-provider container-style="margin-top: 16px;">
+          <div class="app-shell">
+            <Header />
+            <div class="app-body" :class="{ 'has-ads': showAd }">
+              <aside v-if="showSideMargin && showAd" class="app-side-ad">
                 <ins class="adsbygoogle" style="display:block" :data-ad-client="adClient" :data-ad-slot="adSlot"
                   data-ad-format="auto" data-full-width-responsive="true"></ins>
-              </div>
-            </n-gi>
-            <n-gi :span="!showSideMargin ? gridMaxCols : (gridMaxCols - 2)">
-              <div class="main">
-                <n-space vertical>
-                  <n-layout style="min-height: 80vh;">
-                    <Header />
-                    <router-view></router-view>
-                  </n-layout>
-                  <Footer />
-                </n-space>
-              </div>
-            </n-gi>
-            <n-gi v-if="showSideMargin" span="1">
-              <div class="side" v-if="showAd">
+              </aside>
+              <main class="app-main" :class="{ 'is-constrained': showSideMargin && !showAd, 'is-full': !showSideMargin }">
+                <div class="app-content">
+                  <router-view></router-view>
+                </div>
+                <Footer />
+              </main>
+              <aside v-if="showSideMargin && showAd" class="app-side-ad">
                 <ins class="adsbygoogle" style="display:block" :data-ad-client="adClient" :data-ad-slot="adSlot"
                   data-ad-format="auto" data-full-width-responsive="true"></ins>
-              </div>
-            </n-gi>
-          </n-grid>
-          <n-back-top />
+              </aside>
+            </div>
+          </div>
+          <n-back-top :right="20" :bottom="isMobile ? 84 : 32" />
         </n-message-provider>
       </n-notification-provider>
     </n-spin>
   </n-config-provider>
 </template>
 
-
 <style>
 .n-switch {
-  margin-left: 10px;
-  margin-right: 10px;
+  margin-left: 8px;
+  margin-right: 8px;
 }
 
-@media (hover: none) and (pointer: coarse) and (max-width: 1024px) {
-  :where(input, textarea, select, [contenteditable="true"]) {
-    font-size: 16px !important;
-  }
-
-  :where(.n-input, .n-input-number, .n-base-selection, .n-input-group-label) {
-    --n-font-size: 16px !important;
-  }
+.app-root-spin > .n-spin-content {
+  min-height: 100dvh;
 }
 </style>
 
 <style scoped>
-.side {
-  height: 100vh;
+.app-shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--app-bg);
+  color: var(--app-text);
 }
 
-.main {
-  height: 100vh;
-  text-align: center;
+.app-body {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
 }
 
-.n-grid {
-  height: 100%;
+.app-side-ad {
+  width: 180px;
+  flex: 0 0 180px;
+  padding: 16px 8px;
 }
 
-.n-gi {
-  height: 100%;
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 16px 24px 0;
 }
 
-.n-space {
-  height: 100%;
+.app-main.is-constrained {
+  max-width: var(--app-max-width);
+}
+
+.app-main.is-full {
+  max-width: 100%;
+  padding: 16px 24px 0;
+}
+
+.app-content {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  .app-main,
+  .app-main.is-full {
+    padding: 10px 12px 0;
+  }
 }
 </style>

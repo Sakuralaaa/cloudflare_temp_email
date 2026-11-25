@@ -15,12 +15,6 @@ const { preferShowTextMail, useIframeShowMail, useUTCDate, isDark, autoLoadRemot
 
 const { t } = useScopedI18n('components.MailContentRenderer')
 const themeVars = useThemeVars();
-const replyColor = computed(() => isDark.value ? themeVars.value.infoColor : themeVars.value.infoColorPressed);
-const neutralActionColor = computed(() =>
-  `color-mix(in srgb, ${themeVars.value.textColor2} 50%, ${themeVars.value.textColor3})`);
-const deleteColor = computed(() => isDark.value
-  ? `color-mix(in srgb, ${themeVars.value.errorColor} 65%, ${themeVars.value.textColor1})`
-  : themeVars.value.errorColorPressed);
 
 const props = defineProps({
   mail: {
@@ -47,7 +41,6 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  // 回调函数 props
   onDelete: {
     type: Function,
     default: () => { }
@@ -87,9 +80,6 @@ watch(showMoreActions, async (show) => {
   if (showMoreActions.value) downloadMailButton.value?.$el.focus();
 });
 
-// Per-mail consent, deliberately independent of the global setting: it only
-// ever turns true when the user clicks "load images" for this specific mail,
-// and resets when a different mail is shown.
 const showRemoteImages = ref(false);
 watch(() => props.mail.id, () => {
   showRemoteImages.value = false;
@@ -110,6 +100,11 @@ const processedMail = computed(() => {
 const shadowMailHtml = computed(() => allowRemoteImages.value
   ? blockRemoteContent(processedMail.value.message, { allowRemoteImages: true }).html
   : processedMail.value.message);
+
+const senderInitial = computed(() => {
+  const raw = (props.mail.source || '').trim().replace(/^["'<]+/, '');
+  return (raw[0] || '?').toUpperCase();
+});
 
 const handleLoadRemoteImages = () => {
   showRemoteImages.value = true;
@@ -162,7 +157,6 @@ const handleUpdateMailReadStatus = async () => {
   }
 };
 
-
 const handleSaveToS3 = async (filename, blob) => {
   attachmentLoding.value = true;
   try {
@@ -171,48 +165,45 @@ const handleSaveToS3 = async (filename, blob) => {
     attachmentLoding.value = false;
   }
 };
-
 </script>
 
 <template>
   <div class="mail-content-renderer">
-    <div class="mail-details">
-      <div class="mail-address">
-        <n-text depth="3" class="mail-address-label">{{ t('from') }}</n-text>
-        <n-text depth="2">{{ mail.source }}</n-text>
+    <!-- Sender & Metadata Header -->
+    <div class="mail-header-meta">
+      <div class="sender-row">
+        <div class="reader-avatar" aria-hidden="true">{{ senderInitial }}</div>
+        <div class="sender-info">
+          <div class="sender-address" :title="mail.source">{{ mail.source || '—' }}</div>
+          <div class="sender-sub">
+            <span v-if="showEMailTo" class="recipient-chip">{{ t('to') }}: {{ mail.address }}</span>
+            <span class="time-chip">{{ utcToLocalDate(mail.created_at, useUTCDate) }}</span>
+          </div>
+        </div>
       </div>
-      <div v-if="showEMailTo" class="mail-address">
-        <n-text depth="3" class="mail-address-label">{{ t('to') }}</n-text>
-        <n-text depth="2">{{ mail.address }}</n-text>
-      </div>
-      <div class="mail-details-footer">
-        <n-text depth="3">{{ utcToLocalDate(mail.created_at, useUTCDate) }}</n-text>
-      </div>
-    </div>
-    <n-flex class="mail-actions" align="center" justify="space-between" :size="4">
-      <n-space v-if="showReply || mail.attachments?.length" align="center" :size="4">
-        <n-button v-if="showReply" size="small" quaternary type="info" :color="replyColor" @click="handleReply">
-          <template #icon><n-icon :component="ReplyFilled" /></template>
-          {{ t('reply') }}
-        </n-button>
-        <n-button v-if="showReply" size="small" quaternary :color="neutralActionColor" @click="handleForward">
-          <template #icon><n-icon :component="ForwardFilled" /></template>
-          {{ t('forward') }}
-        </n-button>
-        <n-button v-if="mail.attachments?.length" size="small" quaternary :color="neutralActionColor"
-          :title="t('attachments')" :aria-label="t('attachments')" @click="handleViewAttachments">
-          <template #icon><n-icon :component="AttachFileRound" /></template>
-          <n-space align="center" :size="4">
-            <span>{{ t('attachments') }}</span>
-            <n-badge :value="mail.attachments.length" :color="themeVars.tagColor" />
-          </n-space>
-        </n-button>
-      </n-space>
-      <div class="mail-secondary-actions">
-        <n-space align="center" :wrap="false" :size="4">
+
+      <!-- Action Toolbar -->
+      <div class="mail-actions-bar">
+        <div class="mail-primary-actions">
+          <n-button v-if="showReply" size="small" secondary type="primary" @click="handleReply">
+            <template #icon><n-icon :component="ReplyFilled" /></template>
+            {{ t('reply') }}
+          </n-button>
+          <n-button v-if="showReply" size="small" quaternary @click="handleForward">
+            <template #icon><n-icon :component="ForwardFilled" /></template>
+            {{ t('forward') }}
+          </n-button>
+          <n-button v-if="mail.attachments?.length" size="small" secondary
+            :title="t('attachments')" :aria-label="t('attachments')" @click="handleViewAttachments">
+            <template #icon><n-icon :component="AttachFileRound" /></template>
+            <span>{{ t('attachments') }} ({{ mail.attachments.length }})</span>
+          </n-button>
+        </div>
+
+        <div class="mail-secondary-actions">
           <n-popover v-model:show="showMoreActions" trigger="click" placement="bottom-end" :show-arrow="false">
             <template #trigger>
-              <n-button ref="moreActionsButton" size="small" quaternary :color="neutralActionColor" :title="t('moreActions')" :aria-label="t('moreActions')"
+              <n-button ref="moreActionsButton" size="small" quaternary :title="t('moreActions')" :aria-label="t('moreActions')"
                 :aria-expanded="showMoreActions" @keydown.esc.stop.prevent="closeMoreActions">
                 <template #icon><n-icon :component="MoreHorizRound" /></template>
                 {{ t('more') }}
@@ -245,37 +236,38 @@ const handleSaveToS3 = async (filename, blob) => {
               </n-button>
             </div>
           </n-popover>
+
           <n-popconfirm v-if="enableUserDeleteEmail" @positive-click="handleDelete">
             <template #trigger>
-              <n-button size="small" quaternary type="error" :color="deleteColor" :title="t('delete')" :aria-label="t('delete')">
+              <n-button size="small" quaternary type="error" :title="t('delete')" :aria-label="t('delete')">
                 <template #icon><n-icon :component="DeleteOutlineRound" /></template>
                 {{ t('delete') }}
               </n-button>
             </template>
             {{ t('deleteMailTip') }}
           </n-popconfirm>
-        </n-space>
+        </div>
       </div>
-    </n-flex>
+    </div>
 
-    <!-- 外部资源阻断提示 -->
+    <!-- Remote images blocked banner -->
     <n-alert v-if="processedMail.blocked" type="warning" :show-icon="false" :bordered="false"
       class="remote-images-banner">
-      <n-space align="center" justify="space-between">
+      <div class="remote-images-inner">
         <span>{{ t('remoteImagesBlocked', { count: processedMail.blocked }) }}</span>
-        <n-button size="tiny" tertiary type="warning" @click="handleLoadRemoteImages">
+        <n-button size="tiny" secondary type="warning" @click="handleLoadRemoteImages">
           <template #icon>
             <n-icon :component="ImageRound" />
           </template>
           {{ t('loadRemoteImages') }}
         </n-button>
-      </n-space>
+      </div>
     </n-alert>
 
-    <!-- AI 提取信息 -->
-    <AiExtractInfo :metadata="mail.metadata" />
+    <!-- AI / Smart OTP Extract Card -->
+    <AiExtractInfo :metadata="mail.metadata" :subject="mail.subject" :text="mail.text" />
 
-    <!-- 邮件内容 -->
+    <!-- Email Body -->
     <div class="mail-content" :class="{ 'dark-mode': isDark }">
       <pre v-if="showTextMail" class="mail-text">{{ mail.text }}</pre>
       <iframe v-else-if="useIframeShowMail" :srcdoc="processedMail.message" class="mail-iframe" sandbox="allow-same-origin allow-popups">
@@ -284,8 +276,9 @@ const handleSaveToS3 = async (filename, blob) => {
     </div>
   </div>
 
-  <n-modal v-model:show="showMailDetails" preset="card" title="Mail details" :bordered="false"
-    class="mail-details-modal" style="width: min(480px, calc(100vw - 32px));">
+  <!-- Mail Details Modal -->
+  <n-modal v-model:show="showMailDetails" preset="card" :title="t('mailDetails')" :bordered="false"
+    class="mail-details-modal" style="width: min(480px, calc(100vw - 24px));">
     <n-descriptions :column="1" label-placement="left" :content-style="{ overflowWrap: 'anywhere' }">
       <n-descriptions-item v-if="mail.subject" label="Subject">{{ mail.subject }}</n-descriptions-item>
       <n-descriptions-item label="From">{{ mail.source }}</n-descriptions-item>
@@ -307,8 +300,9 @@ const handleSaveToS3 = async (filename, blob) => {
     </n-descriptions>
   </n-modal>
 
-  <n-drawer v-model:show="showFullscreen" width="100%" placement="bottom" :trap-focus="false" :block-scroll="false"
-    style="height: 100vh;">
+  <!-- Fullscreen Drawer -->
+  <n-drawer v-model:show="showFullscreen" width="100%" placement="bottom" :trap-focus="false" :block-scroll="true"
+    style="height: 100dvh;">
     <n-drawer-content :title="mail.subject" closable>
       <div class="fullscreen-mail-content" :class="{ 'dark-mode': isDark }">
         <pre v-if="showTextMail" class="mail-text">{{ mail.text }}</pre>
@@ -319,31 +313,28 @@ const handleSaveToS3 = async (filename, blob) => {
     </n-drawer-content>
   </n-drawer>
 
-  <!-- 附件模态框 -->
-  <n-modal v-model:show="showAttachments" preset="dialog" title="Dialog">
-    <template #header>
-      <div>{{ t('attachments') }}</div>
-    </template>
+  <!-- Attachments Modal -->
+  <n-modal v-model:show="showAttachments" preset="card" :title="t('attachments')" style="width: min(460px, calc(100vw - 24px));">
     <n-spin v-model:show="attachmentLoding">
       <n-list hoverable clickable>
         <n-list-item v-for="row in curAttachments" v-bind:key="row.id">
-          <n-thing class="center" :title="row.filename">
+          <n-thing :title="row.filename">
             <template #description>
-              <n-space>
-                <n-tag type="info">
-                  Size: {{ row.size }}
+              <n-space align="center">
+                <n-tag size="small" :bordered="false" type="info">
+                  {{ row.size }}
                 </n-tag>
-                <n-button v-if="showSaveS3" @click="handleSaveToS3(row.filename, row.blob)" ghost type="info"
-                  size="small">
+                <n-button v-if="showSaveS3" @click="handleSaveToS3(row.filename, row.blob)" secondary type="info"
+                  size="tiny">
                   {{ t('saveToS3') }}
                 </n-button>
               </n-space>
             </template>
           </n-thing>
           <template #suffix>
-            <n-button tag="a" target="_blank" tertiary type="info" size="small" :download="row.filename"
+            <n-button tag="a" target="_blank" secondary type="primary" size="small" :download="row.filename"
               :href="row.url">
-              <n-icon :component="CloudDownloadRound" />
+              <template #icon><n-icon :component="CloudDownloadRound" /></template>
             </n-button>
           </template>
         </n-list-item>
@@ -356,54 +347,98 @@ const handleSaveToS3 = async (filename, blob) => {
 .mail-content-renderer {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
 }
 
-.mail-details {
-  font-size: 13px;
-  line-height: 22px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--n-border-color);
+.mail-header-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--app-border);
 }
 
-.mail-address {
-  display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 8px;
+.sender-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.reader-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--app-accent-soft);
+  color: var(--app-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.sender-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.sender-address {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--app-text);
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.sender-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--app-text-muted);
+}
+
+.recipient-chip {
   overflow-wrap: anywhere;
 }
 
-.mail-address-label {
-  font-size: 11px;
+.mail-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.mail-details-footer {
+.mail-primary-actions,
+.mail-secondary-actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 4px 16px;
-  margin-top: 6px;
-  font-size: 12px;
+  gap: 4px;
 }
 
 .mail-secondary-actions {
   margin-left: auto;
 }
 
-.mail-actions :deep(.n-badge-sup) {
-  color: v-bind('themeVars.textColor2');
-}
-
 .mail-more-actions {
-  width: 200px;
-  max-width: calc(100vw - 48px);
+  width: 210px;
+  max-width: calc(100vw - 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .mail-more-actions :deep(.n-button) {
   justify-content: flex-start;
   height: auto;
-  min-height: 32px;
-  padding: 6px 8px;
+  min-height: 34px;
+  padding: 6px 10px;
 }
 
 .mail-more-actions :deep(.n-button__content) {
@@ -411,41 +446,44 @@ const handleSaveToS3 = async (filename, blob) => {
   text-align: left;
 }
 
-/* Let the banner's inner space fill the alert so the button sits on the right. */
-.remote-images-banner :deep(.n-space) {
+.remote-images-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   width: 100%;
+  font-size: 13px;
 }
 
 .mail-content {
-  margin-top: 10px;
+  margin-top: 2px;
   flex: 1;
   min-width: 0;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 10px;
 }
 
 .mail-text {
   white-space: pre-wrap;
   word-wrap: break-word;
+  overflow-wrap: anywhere;
   margin: 0;
-  padding: 0;
+  padding: 4px 0;
   font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
-}
-
-.dark-mode .mail-text {
-  color: #e0e0e0;
+  font-size: 14.5px;
+  line-height: 1.68;
+  color: var(--app-text);
 }
 
 .mail-iframe {
   width: 100%;
   height: 100%;
-  border: none;
-  min-height: 400px;
-}
-
-.dark-mode .mail-iframe {
-  background-color: #fff;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  min-height: 420px;
+  background: #ffffff;
 }
 
 .mail-html {
@@ -453,16 +491,12 @@ const handleSaveToS3 = async (filename, blob) => {
   height: 100%;
 }
 
-.center {
-  text-align: center;
-}
-
 .fullscreen-mail-content {
-  height: calc(100vh - 120px);
+  height: calc(100dvh - 88px);
   overflow: auto;
 }
 
 .fullscreen-mail-content .mail-iframe {
-  min-height: calc(100vh - 120px);
+  min-height: calc(100dvh - 100px);
 }
 </style>
